@@ -445,14 +445,15 @@ index 0000000..a801751
 +<p>그 코드를 복사해 설문지에 붙여 넣어야 참여가 완료됩니다.</p>
 diff --git a/includes/instructions/korean/A1_track.txt b/includes/instructions/korean/A1_track.txt
 new file mode 100644
-index 0000000..0a3a5a2
+index 0000000..860ff68
 --- /dev/null
 +++ b/includes/instructions/korean/A1_track.txt
-@@ -0,0 +1,4 @@
+@@ -0,0 +1,5 @@
 +<h1>과제 1. 추적 (가운데 위)</h1>
 +<p>주황 테두리 안의 <strong>초록 원이 여러분의 커서</strong>입니다. 커서는 저절로 계속 가운데에서 벗어나려 합니다.</p>
 +<p><strong>마우스를 움직이면 커서가 그만큼 움직입니다.</strong> 버튼은 누르지 않아도 됩니다. 커서를 <strong>가운데 원 안</strong>에 최대한 오래 두세요. 원 밖으로 나가면 커서가 빨갛게 바뀝니다.</p>
-+<p>스페이스 바를 누른 뒤 <strong>화면을 한 번 클릭</strong>하면 마우스 화살표가 사라지고 추적이 시작됩니다. 20초 동안 연습합니다.</p>
++<p>과제 중에는 마우스 화살표가 보이지 않습니다. 화면에서 움직이는 것은 초록 커서뿐입니다.</p>
++<p>스페이스 바를 누르면 <strong>20초</strong> 동안 연습합니다.</p>
 diff --git a/includes/instructions/korean/A2_comm.txt b/includes/instructions/korean/A2_comm.txt
 new file mode 100644
 index 0000000..c7d6957
@@ -474,13 +475,13 @@ index 0000000..5053012
 +<p>스페이스 바를 누르고 들어 보세요(약 12초).</p>
 diff --git a/includes/instructions/korean/A4_both.txt b/includes/instructions/korean/A4_both.txt
 new file mode 100644
-index 0000000..2d005af
+index 0000000..0de4970
 --- /dev/null
 +++ b/includes/instructions/korean/A4_both.txt
 @@ -0,0 +1,3 @@
 +<h1>둘을 함께</h1>
 +<p>이제 <strong>추적을 하면서 교신</strong>도 처리합니다. 음성을 듣는 동안에도 커서를 놓치지 마세요.</p>
-+<p>스페이스 바를 누르면 <strong>40초 연습</strong>을 합니다. 화면을 클릭해야 추적이 시작됩니다.</p>
++<p>스페이스 바를 누르면 <strong>40초 연습</strong>을 합니다.</p>
 diff --git a/includes/instructions/korean/A5_main.txt b/includes/instructions/korean/A5_main.txt
 new file mode 100644
 index 0000000..c05d76c
@@ -553,13 +554,13 @@ index 0000000..3e8e356
 +<p>스페이스 바를 누르면 이 칸만 <strong>45초</strong> 동안 직접 해 봅니다.</p>
 diff --git a/includes/instructions/korean/B6_all.txt b/includes/instructions/korean/B6_all.txt
 new file mode 100644
-index 0000000..817c514
+index 0000000..c0d1ed0
 --- /dev/null
 +++ b/includes/instructions/korean/B6_all.txt
 @@ -0,0 +1,3 @@
 +<h1>네 가지를 함께</h1>
 +<p>이제 네 칸이 모두 움직입니다. 추적을 하면서 감시, 교신, 연료를 함께 챙기세요. 어느 하나만 하지 말고 고르게 신경 쓰는 것이 중요합니다.</p>
-+<p>스페이스 바를 누르면 <strong>1분 연습</strong>을 합니다. 연습은 점수에 들어가지 않습니다. 화면을 클릭해야 추적이 시작됩니다.</p>
++<p>스페이스 바를 누르면 <strong>1분 연습</strong>을 합니다. 연습은 점수에 들어가지 않습니다.</p>
 diff --git a/includes/instructions/korean/B7_main.txt b/includes/instructions/korean/B7_main.txt
 new file mode 100644
 index 0000000..cda0d58
@@ -1831,18 +1832,19 @@ index 0000000..e21cdab
 +window.KoreanTTS = KoreanTTS;
 diff --git a/web/mouse_tracking.js b/web/mouse_tracking.js
 new file mode 100644
-index 0000000..f512ce7
+index 0000000..3c640a9
 --- /dev/null
 +++ b/web/mouse_tracking.js
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,94 @@
 +// Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
 +// Institut National Universitaire Champollion (Albi, France).
 +// License : CeCILL, version 2.1 (see the LICENSE file)
 +//
 +// Korean adaptation (2026): tracking by moving the mouse, the mouse pointer being hidden (pointer lock). The green
 +// cursor of the tracking task is the participant's cursor: plugins/track.py (parameter mousemove) takes the mouse
-+// movements accumulated here at each step. While the tracking task runs without the pointer lock (start, Esc), a
-+// message asks for a click, which locks the pointer again; the losses are counted (logged by the plugin).
++// movements accumulated here at each step. The pointer is locked by the start button (lockNow) for the whole
++// session. If the lock is lost while the tracking task runs (Esc), a message asks for a click, which locks the
++// pointer again; the losses are counted (logged by the plugin).
 +
 +const state = { dx: 0, dy: 0, wanted: false, locked: false, lostUnread: false };
 +let overlay = null;
@@ -1854,7 +1856,7 @@ index 0000000..f512ce7
 +function makeOverlay() {
 +    overlay = document.createElement("div");
 +    overlay.id = "pointer-lock-overlay";
-+    overlay.textContent = "화면을 클릭하면 추적을 시작합니다 (마우스 커서는 숨겨집니다)";
++    overlay.textContent = "마우스 고정이 풀렸습니다. 여기를 클릭하면 다시 고정되고 추적이 이어집니다";
 +    Object.assign(overlay.style, {
 +        position: "fixed", left: "50%", top: "28%", transform: "translate(-50%, -50%)", zIndex: "1000",
 +        padding: "18px 28px", borderRadius: "10px", background: "rgba(230, 120, 0, 0.95)", color: "#fff",
@@ -1874,10 +1876,10 @@ index 0000000..f512ce7
 +}
 +
 +function lock() {
-+    const target = canvas();
-+    target?.focus();
-+    if (target && !document.pointerLockElement) {
-+        const request = target.requestPointerLock();
++    canvas()?.focus();
++    // The page itself (not the canvas): it can be locked by the start button, before the canvas is shown
++    if (!document.pointerLockElement) {
++        const request = document.documentElement.requestPointerLock();
 +        // Chrome refuses a new lock right after an Esc: the message stays and the next click retries
 +        request?.catch?.(() => {});
 +    }
@@ -1901,6 +1903,8 @@ index 0000000..f512ce7
 +});
 +
 +export const MouseTracking = {
++    // To call in the click handler of the start button (a user gesture is needed)
++    lockNow: lock,
 +    // "dx,dy" (pixels, y downward) moved since the previous call, or "lost" once after a loss of the pointer lock
 +    take() {
 +        if (state.lostUnread) {
@@ -1927,7 +1931,7 @@ index 0000000..f512ce7
 +};
 +window.MouseTracking = MouseTracking;
 diff --git a/web/openmatb.js b/web/openmatb.js
-index e26ec0b..559c1b8 100644
+index e26ec0b..aebc03b 100644
 --- a/web/openmatb.js
 +++ b/web/openmatb.js
 @@ -15,6 +15,8 @@ import { connectScorm } from "./scorm.js";
@@ -2088,7 +2092,17 @@ index e26ec0b..559c1b8 100644
      }
  }
  
-@@ -639,6 +761,9 @@ $("start").addEventListener("click", async () => {
+@@ -632,6 +754,9 @@ $("start").addEventListener("click", async () => {
+     // Everything that needs the user gesture must happen before the first await
+     const wantsFullscreen = $("fullscreen").checked;
+     const fullscreen = wantsFullscreen ? document.documentElement.requestFullscreen().catch(() => {}) : null;
++    if (STUDY) {
++        MouseTracking.lockNow(); // Tracking by mouse movements: the pointer is hidden for the whole session
++    }
+ 
+     const params = new URLSearchParams(location.search);
+     params.set("lang", $("lang").value);
+@@ -639,6 +764,9 @@ $("start").addEventListener("click", async () => {
      if (DEMO && !params.has("scenario")) {
          params.set("scenario", DEMO_SCENARIO);
      }
@@ -2098,7 +2112,7 @@ index e26ec0b..559c1b8 100644
      history.replaceState(null, "", `?${params}`);
  
      const file = $("mode").value === "replay" ? $("session-file").files[0] : undefined;
-@@ -729,6 +854,7 @@ function destinationItem(text, ok) {
+@@ -729,6 +857,7 @@ function destinationItem(text, ok) {
  
  // Dispatched by core.logger.Logger.end_session(), with the path of the session file: download it and/or send it
  document.addEventListener("openmatb-end", async (event) => {
@@ -2106,7 +2120,7 @@ index e26ec0b..559c1b8 100644
      if (document.fullscreenElement) {
          document.exitFullscreen();
      }
-@@ -751,6 +877,9 @@ document.addEventListener("openmatb-end", async (event) => {
+@@ -751,6 +880,9 @@ document.addEventListener("openmatb-end", async (event) => {
          document.querySelector('#end [data-i18n="kept_in_browser"]').hidden = true;
          return;
      }
