@@ -16,6 +16,7 @@ import { Cmi5Session, cmi5LaunchParameters, preferredLanguage } from "./cmi5.js"
 import { SerialTrigger, describePort } from "./serial_trigger.js";
 import { LslBridge } from "./lsl_bridge.js";
 import { KoreanTTS } from "./korean_tts.js";
+import { MouseTracking } from "./mouse_tracking.js";
 
 // Set by web/build.py: pyodide.mjs on the Pyodide CDN, or its copy shipped with the page (--pyodide local)
 const PYODIDE_MODULE = new URL(document.querySelector('meta[name="pyodide-module"]').content, location.href).href;
@@ -396,7 +397,7 @@ const DEMO_SCENARIO = "demo.txt";
 const QUERY = new URLSearchParams(location.search);
 const STUDY = !DEMO && QUERY.get("admin") !== "1" && !QUERY.get("cmi5") && !QUERY.get("endpoint");
 const STUDY_SCENARIO = "korean/study.txt";
-const SAMPLE_PROMPT = "에이 비 씨 하나 둘 삼, 에이 비 씨 하나 둘 삼. 무전기 컴 원, 주파수 하나 둘 여섯 점 오.";
+const SAMPLE_PROMPT = "에이, 비, 씨, 하나, 둘, 삼, 에이, 비, 씨, 하나, 둘, 삼, 무전기, 컴, 원, 주파수, 하나, 둘, 여섯, 쩜, 오.";
 let soundChecked = false;
 
 function setupStudyPage() {
@@ -853,6 +854,7 @@ function destinationItem(text, ok) {
 
 // Dispatched by core.logger.Logger.end_session(), with the path of the session file: download it and/or send it
 document.addEventListener("openmatb-end", async (event) => {
+    MouseTracking.release();
     if (document.fullscreenElement) {
         document.exitFullscreen();
     }

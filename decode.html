@@ -29,20 +29,25 @@
   <h2 style="font-size:16px">열 설명</h2>
   <ul>
     <li><b>valid</b>: 1이면 코드가 손상·수정되지 않음. 0이면 제외 권장 · <b>session</b>: 기록 파일 이름(날짜·시각, 중복 확인용)</li>
-    <li><b>A_trk_in / A_trk_rms</b>: 과업 1(추적 단독, 본 측정 120초)에서 커서가 원 안에 있던 비율(%) / 중심과의 거리 RMS(픽셀, 낮을수록 정확)</li>
-    <li><b>B_trk_in / B_trk_rms</b>: 과업 2(네 과업 동시, 10분) 중 추적의 같은 지표</li>
-    <li><b>B_sm_hit / B_sm_auto / B_sm_miss / B_sm_fa / B_sm_rt</b>: 시스템 감시. 참가자가 직접 처리한 이상 / 자동 장치가 처리한 이상 / 10초 안에 처리하지 못한 이상 / 이상이 없는데 누른 횟수 / 직접 처리의 평균 반응시간(ms)</li>
-    <li><b>B_cm_hit / miss / fa / bad_radio / bad_freq / bad_radio_freq / B_cm_rt</b>: 교신. 내 호출부호 정답 / 무응답 / 남의 호출에 응답 / 무전기 틀림 / 주파수 틀림 / 둘 다 틀림 / 정답의 평균 반응시간(ms, 음성이 끝난 뒤부터)</li>
+    <li><b>A_trk_in / A_trk_rms</b>: 과제 1(추적 + 교신, 본 측정 150초)에서 커서가 원 안에 있던 비율(%) / 중심과의 거리 RMS(픽셀, 낮을수록 정확)</li>
+    <li><b>A_cm_*</b>: 과제 1 교신(내 호출 4건). 열 이름은 아래 B_cm_*와 같은 뜻</li>
+    <li><b>B_sm_man_n / B_sm_man_hit / B_sm_man_rt</b>: <b>주 준거.</b> 과제 2(5분)에서 자동 장치가 놓치는 이상의 수(6) / 그중 참가자가 10초 안에 처리한 수 / 그 평균 반응시간(ms)</li>
+    <li><b>B_trk_in / B_trk_rms</b>: 과제 2 중 추적의 같은 지표</li>
+    <li><b>B_sm_hit / B_sm_auto / B_sm_miss / B_sm_fa / B_sm_rt</b>: 시스템 감시 전체. 참가자가 처리한 이상 / 자동 장치가 처리한 이상 / 10초 안에 처리되지 않은 이상 / 이상이 없는데 누른 횟수 / 참가자 처리의 평균 반응시간(ms)</li>
+    <li><b>B_cm_hit / miss / fa / bad_radio / bad_freq / bad_radio_freq / B_cm_rt</b>: 교신(내 호출 8건). 정답 / 무응답 / 남의 호출에 응답 / 무전기 틀림 / 주파수 틀림 / 둘 다 틀림 / 정답의 평균 반응시간(ms, 음성이 끝난 뒤부터)</li>
     <li><b>B_rm_a / B_rm_b / B_rm</b>: 연료 관리. 탱크 A, B가 목표 범위 안에 있던 시간 비율(%)과 그 평균</li>
-    <li><b>hidden</b>: 과업 중 다른 탭·창으로 나간 횟수(1 이상이면 검토) · <b>freeze_ms</b>: 브라우저가 멈춘 시간 합계(ms, 수천 ms 이상이면 검토)</li>
+    <li><b>hidden</b>: 과업 중 다른 탭·창으로 나간 횟수(1 이상이면 검토) · <b>pointer_lost</b>: 추적 중 마우스 잠금이 풀린 횟수(Esc 등) · <b>freeze_ms</b>: 브라우저가 멈춘 시간 합계(ms, 수천 ms 이상이면 검토)</li>
     <li><b>browser / voice / win_h</b>: 브라우저, 사용된 한국어 음성, 창 높이(픽셀). voice가 비어 있으면 음성이 안 나왔을 수 있으므로 제외 검토</li>
   </ul>
 </main>
 <script>
 "use strict";
 function fnv1a(str) { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); } return (h >>> 0).toString(36); }
-const COLS = ["valid", "session", "browser", "voice", "win_h", "hidden", "freeze_ms",
-  "A_trk_in", "A_trk_rms", "B_trk_in", "B_trk_rms",
+const COLS = ["valid", "session", "browser", "voice", "win_h", "hidden", "pointer_lost", "freeze_ms",
+  "A_trk_in", "A_trk_rms",
+  "A_cm_hit", "A_cm_miss", "A_cm_fa", "A_cm_bad_radio", "A_cm_bad_freq", "A_cm_bad_radio_freq", "A_cm_rt",
+  "B_sm_man_n", "B_sm_man_hit", "B_sm_man_rt",
+  "B_trk_in", "B_trk_rms",
   "B_sm_hit", "B_sm_auto", "B_sm_miss", "B_sm_fa", "B_sm_rt",
   "B_cm_hit", "B_cm_miss", "B_cm_fa", "B_cm_bad_radio", "B_cm_bad_freq", "B_cm_bad_radio_freq", "B_cm_rt",
   "B_rm_a", "B_rm_b", "B_rm"];

@@ -32,10 +32,10 @@ index 9c25899..064c35b 100644
  # (Chrome or Edge: Web Serial API)
 diff --git a/core/korean_score.py b/core/korean_score.py
 new file mode 100644
-index 0000000..751cfee
+index 0000000..de7a4cd
 --- /dev/null
 +++ b/core/korean_score.py
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,183 @@
 +# Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
 +# Institut National Universitaire Champollion (Albi, France).
 +# License : CeCILL, version 2.1 (see the LICENSE file)
@@ -45,11 +45,12 @@ index 0000000..751cfee
 +"""Score a session of includes/scenarios/korean/study.txt.
 +
 +The scoring windows (scenario seconds) are read from the "# PHASES {...}" line of the scenario. Measures:
-+- Task 1 (A_main, tracking alone) and task 2 (B_main): tracking, % of updates with the cursor in the target, and the
++- Task 1 (A_main, tracking + communications) and task 2 (B_main): tracking, % of updates with the cursor in the target, and the
 +  RMS distance to the center (pixels, with the window height to normalise it)
-+- System monitoring (B_main): misses of the automation handled by the participant (HIT by a human), misses,
-+  false alarms, mean response time (ms)
-+- Communications (B_main): counts of each signal detection value and mean response time of the hits (ms)
++- System monitoring (B_main): malfunctions handled by the participant (HIT by a human), by the automation, misses,
++  false alarms, mean response time (ms); main criterion: the malfunctions the automation misses (B_sm_man_*)
++- Communications (A_main and B_main): counts of each signal detection value and mean response time of the hits (ms,
++  from the end of the spoken message)
 +- Resources management (B_main): % of time tanks A and B are within tolerance
 +
 +result_code() returns "OM1-" + base64 of {"j": json, "c": checksum}: web/decode.html turns codes into a table.
@@ -76,6 +77,27 @@ index 0000000..751cfee
 +    raise ValueError("No PHASES line in the scenario")
 +
 +
++def read_failures(scenario: Path = SCENARIO) -> list[tuple[float, str, bool]]:
++    """System monitoring malfunctions of the scenario: (onset in s, gauge name as displayed, automated or not)."""
++    names: dict[str, str] = {}
++    auto: bool = False
++    failures: list[tuple[float, str, bool]] = []
++    for line in scenario.read_text(encoding="utf-8").splitlines():
++        parts: list[str] = line.split(";")
++        if line.startswith("#") or len(parts) < 4 or parts[1] != "sysmon":
++            continue
++        h, m, sec = (int(x) for x in parts[0].split(":"))
++        t: float = h * 3600 + m * 60 + sec
++        if parts[2].endswith("-name"):
++            names[parts[2][: -len("-name")]] = parts[3]
++        elif parts[2] == "automaticsolver":
++            auto = parts[3] == "True"
++        elif parts[2].endswith("-failure"):
++            gauge: str = parts[2][: -len("-failure")]
++            failures.append((t, names.get(gauge, gauge), auto))
++    return failures
++
++
 +def _float(value: str) -> float:
 +    try:
 +        return float(value)
@@ -92,7 +114,9 @@ index 0000000..751cfee
 +    return mean(values) if values else None
 +
 +
-+def score_rows(rows: list[dict[str, str]], phases: dict[str, list[float]]) -> dict[str, Any]:
++def score_rows(
++    rows: list[dict[str, str]], phases: dict[str, list[float]], failures: list[tuple[float, str, bool]]
++) -> dict[str, Any]:
 +    def window(name: str) -> list[dict[str, str]]:
 +        start, end = phases[name]
 +        return [r for r in rows if start <= _float(r["scenario_time"]) < end]
@@ -120,7 +144,7 @@ index 0000000..751cfee
 +    events: list[dict[str, str]] = []
 +    for r in sys_rows:
 +        if r["address"] == "name" or not events:
-+            events.append({})
++            events.append({"_time": r["scenario_time"]})
 +        events[-1][r["address"]] = r["value"]
 +    hits = [e for e in events if e.get("signal_detection") == "HIT" and e.get("resolved_by") == "human"]
 +    out["B_sm_hit"] = len(hits)
@@ -129,13 +153,30 @@ index 0000000..751cfee
 +    out["B_sm_fa"] = sum(1 for e in events if e.get("signal_detection") == "FA")
 +    out["B_sm_rt"] = _r(_mean([_float(e.get("response_time", "nan")) for e in hits]), 0)
 +
-+    # Communications: one sdt_value and one response_time per response or miss
-+    com = [r for r in block if r["type"] == "performance" and r["module"] == "communications"]
-+    sdt = [r["value"] for r in com if r["address"] == "sdt_value"]
-+    rts = [r["value"] for r in com if r["address"] == "response_time"]
-+    for value in ("HIT", "MISS", "FA", "BAD_RADIO", "BAD_FREQ", "BAD_RADIO_FREQ"):
-+        out[f"B_cm_{value.lower()}"] = sdt.count(value)
-+    out["B_cm_rt"] = _r(_mean([_float(rt) for s, rt in zip(sdt, rts) if s == "HIT"]), 0)
++    # Main criterion: the malfunctions the automation misses (automaticsolver off), handled by the participant.
++    # The onset of a logged malfunction is its end minus its response time (or minus the 10 s timeout if missed).
++    start, end = phases["B_main"]
++    manual = [(t, name) for t, name, auto in failures if start <= t < end and not auto]
++    man_hits: list[float] = []
++    for e in events:
++        if e.get("signal_detection") != "HIT" or e.get("resolved_by") != "human":
++            continue
++        rt = _float(e.get("response_time", "nan"))
++        onset = _float(e.get("_time", "nan")) - rt / 1000
++        if any(name == e.get("name") and abs(t - onset) < 1.5 for t, name in manual):
++            man_hits.append(rt)
++    out["B_sm_man_n"] = len(manual)
++    out["B_sm_man_hit"] = len(man_hits)
++    out["B_sm_man_rt"] = _r(_mean(man_hits), 0)
++
++    # Communications: one sdt_value and one response_time per response or miss (task 1 and task 2)
++    for phase, prefix in (("A_main", "A"), ("B_main", "B")):
++        com = [r for r in window(phase) if r["type"] == "performance" and r["module"] == "communications"]
++        sdt = [r["value"] for r in com if r["address"] == "sdt_value"]
++        rts = [r["value"] for r in com if r["address"] == "response_time"]
++        for value in ("HIT", "MISS", "FA", "BAD_RADIO", "BAD_FREQ", "BAD_RADIO_FREQ"):
++            out[f"{prefix}_cm_{value.lower()}"] = sdt.count(value)
++        out[f"{prefix}_cm_rt"] = _r(_mean([_float(rt) for s, rt in zip(sdt, rts) if s == "HIT"]), 0)
 +
 +    # Resources management
 +    res = [r for r in block if r["type"] == "performance" and r["module"] == "resman"]
@@ -147,6 +188,7 @@ index 0000000..751cfee
 +
 +    # Pauses of the page (tab change) and freezes during the scored windows
 +    out["hidden"] = sum(1 for r in rows if r["type"] == "visibility" and r["value"] in ("hidden", "False"))
++    out["pointer_lost"] = sum(1 for r in rows if r["type"] == "pointerlock_lost")
 +    out["freeze_ms"] = _r(sum(_float(r["value"]) for r in rows if r["type"] == "freeze"), 0)
 +    return out
 +
@@ -154,7 +196,7 @@ index 0000000..751cfee
 +def score_file(path: str | Path, scenario: Path = SCENARIO) -> dict[str, Any]:
 +    with open(path, encoding="utf-8", newline="") as f:
 +        rows = list(csv.DictReader(f))
-+    result = score_rows(rows, read_phases(scenario))
++    result = score_rows(rows, read_phases(scenario), read_failures(scenario))
 +    result["file"] = Path(path).name
 +    return result
 +
@@ -179,10 +221,10 @@ index 0000000..751cfee
 +    return CODE_PREFIX + base64.b64encode(payload.encode("ascii")).decode("ascii")
 diff --git a/core/korean_tts.py b/core/korean_tts.py
 new file mode 100644
-index 0000000..14885d7
+index 0000000..2e1299f
 --- /dev/null
 +++ b/core/korean_tts.py
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,103 @@
 +# Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
 +# Institut National Universitaire Champollion (Albi, France).
 +# License : CeCILL, version 2.1 (see the LICENSE file)
@@ -216,18 +258,20 @@ index 0000000..14885d7
 +    )
 +)
 +DIGITS: dict[str, str] = dict(zip("0123456789", "공 하나 둘 삼 넷 오 여섯 칠 팔 아홉".split()))
-+RADIOS: dict[str, str] = {"NAV_1": "내브 원", "NAV_2": "내브 투", "COM_1": "컴 원", "COM_2": "컴 투"}
++RADIOS: dict[str, str] = {"NAV_1": "내브, 원", "NAV_2": "내브, 투", "COM_1": "컴, 원", "COM_2": "컴, 투"}
 +
 +
-+def say_chars(text: str) -> str:
-+    return " ".join(LETTERS.get(c.upper(), DIGITS.get(c, c)) for c in text if not c.isspace())
++def say_chars(text: str) -> list[str]:
++    return [LETTERS.get(c.upper(), DIGITS.get(c, c)) for c in text if not c.isspace()]
 +
 +
 +def prompt_text(callsign: str, radio_name: str, freq: float) -> str:
-+    """e.g. "에이 비 씨 하나 둘 삼, 에이 비 씨 하나 둘 삼. 무전기 내브 원, 주파수 하나 둘 여섯 점 오." """
-+    call: str = say_chars(callsign)
-+    digits: str = " ".join("점" if c == "." else DIGITS.get(c, c) for c in str(freq))
-+    return f"{call}, {call}. 무전기 {RADIOS.get(radio_name.upper(), radio_name)}, 주파수 {digits}."
++    """Every character is a separate word, so the voice pauses after each one, e.g.
++    "에이치, 에스, 알, 둘, 오, 아홉, 에이치, 에스, 알, 둘, 오, 아홉, 무전기, 컴, 원, 주파수, 하나, 공, 아홉, 쩜, 삼." """
++    call: list[str] = say_chars(callsign)
++    digits: list[str] = ["쩜" if c == "." else DIGITS.get(c, c) for c in str(freq)]
++    words: list[str] = call + call + ["무전기", RADIOS.get(radio_name.upper(), radio_name), "주파수"] + digits
++    return ", ".join(words) + "."
 +
 +
 +def _tts() -> Any:
@@ -272,6 +316,8 @@ index 0000000..14885d7
 +            self._id = _tts().speak(self.text, SPEECH_RATE)
 +
 +    def pause(self) -> None:
++        if self.source is None:  # Already spoken (nobody asked yet): nothing to read again
++            return
 +        # Like the recorded prompts, a paused message is read again from its beginning
 +        self._playing = False
 +        pyglet.clock.unschedule(self._speak)
@@ -319,10 +365,29 @@ index 836be25..b41aa8c 100644
      from pyglet.gl import Config
      from pyglet.media import Player as AudioPlayer
 diff --git a/core/scheduler.py b/core/scheduler.py
-index 4fcf6cf..cf5c2ac 100644
+index 4fcf6cf..c9f0b79 100644
 --- a/core/scheduler.py
 +++ b/core/scheduler.py
-@@ -202,7 +202,10 @@ class Scheduler:
+@@ -15,6 +15,7 @@ from core.clock import Clock
+ from core.constants import REPLAY_MODE, SYSTEM_PSEUDO_PLUGIN
+ from core.error import get_errors
+ from core.event import Event
++from core import study_gate
+ from core.joystick import joystick
+ from core.logger import get_logger
+ from core.platform import IS_WEB, browser_environment, notify_page
+@@ -132,6 +133,10 @@ class Scheduler:
+         self.check_if_must_exit()
+ 
+     def update_timers(self, dt: float) -> None:
++        # Korean adaptation: a tutorial step passed (plugins/gate.py) jumps to the next step
++        if study_gate.skip_to is not None:
++            self.scenario_time = max(self.scenario_time, study_gate.skip_to)
++            study_gate.skip_to = None
+         # Update timers with dt
+         if not self.is_scenario_time_paused():
+             self.scenario_time += dt
+@@ -202,7 +207,10 @@ class Scheduler:
                  if not self.is_scenario_time_paused():
                      self.pause_scenario()
                      self.paused_plugins = self.get_active_non_blocking_plugins()
@@ -334,137 +399,193 @@ index 4fcf6cf..cf5c2ac 100644
  
          # In Replay mode: IT IS the play/pause button that manages the scenario resuming
          elif active_blocking_plugin is None:
+diff --git a/core/study_gate.py b/core/study_gate.py
+new file mode 100644
+index 0000000..ce18bda
+--- /dev/null
++++ b/core/study_gate.py
+@@ -0,0 +1,16 @@
++# Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
++# Institut National Universitaire Champollion (Albi, France).
++# License : CeCILL, version 2.1 (see the LICENSE file)
++#
++# Korean adaptation (2026): lets a tutorial step end as soon as the participant succeeds (plugins/gate.py).
++
++"""Shared state between the communications plugin, the gate plugin and the scheduler.
++
++comm_hits: number of correct communications responses (HIT) by the participant so far.
++skip_to: scenario time (s) the scheduler jumps to at its next update (the events in between are executed at once).
++"""
++
++from __future__ import annotations
++
++comm_hits: int = 0
++skip_to: float | None = None
 diff --git a/includes/instructions/korean/01_welcome.txt b/includes/instructions/korean/01_welcome.txt
 new file mode 100644
-index 0000000..289c438
+index 0000000..8f1ed35
 --- /dev/null
 +++ b/includes/instructions/korean/01_welcome.txt
-@@ -0,0 +1,17 @@
+@@ -0,0 +1,7 @@
 +<h1>연구에 참여해 주셔서 감사합니다</h1>
 +
 +<p>이 과제는 프랑스 연구진이 공개한 다중과업 연구 도구 <strong>OpenMATB</strong>를 한국어로 옮긴 것입니다. 조종 경험이나 사전 지식은 필요 없습니다.</p>
 +
-+<p>과제는 두 부분입니다. <strong>과제 1</strong>은 한 가지 일(추적)만 약 2분 30초, <strong>과제 2</strong>는 네 가지 일을 동시에 하는 것으로 설명과 연습을 포함해 약 15분입니다.</p>
++<p>과제는 두 부분이며, 설명과 연습을 포함해 모두 <strong>약 15분</strong>입니다.<br>· <strong>과제 1</strong> : 추적과 교신, 두 가지를 동시에<br>· <strong>과제 2</strong> : 시스템 감시와 연료 관리를 더해 네 가지를 동시에</p>
 +
-+<p>왼손은 키보드, 오른손은 마우스에 두세요. 중간에 다른 창으로 가면 과제가 멈추니, 끝날 때까지 이 화면에 머물러 주세요.</p>
-+<newpage>
-+<h1>과제 1. 추적</h1>
-+
-+<p>화면 위쪽 가운데에 <strong>추적</strong> 칸이 나타납니다. 작은 원(커서)이 저절로 계속 떠내려갑니다.</p>
-+
-+<p><strong>추적 칸 안을 마우스 왼쪽 버튼으로 누른 채로 끌면</strong>, 끈 방향으로 커서를 미는 힘이 생깁니다. 많이 끌수록 세게 밀리고, 버튼을 놓으면 힘이 사라집니다. 비행기 조종간처럼 움직인다고 생각하세요.</p>
-+
-+<p>커서를 <strong>가운데 원 안</strong>에 최대한 오래 두는 것이 목표입니다. 원 밖으로 나가면 커서가 빨갛게 바뀝니다.</p>
-+
-+<p>먼저 <strong>30초 연습</strong>, 이어서 <strong>2분 본 과제</strong>를 합니다.</p>
-diff --git a/includes/instructions/korean/02_track_main.txt b/includes/instructions/korean/02_track_main.txt
-new file mode 100644
-index 0000000..25fa604
---- /dev/null
-+++ b/includes/instructions/korean/02_track_main.txt
-@@ -0,0 +1,2 @@
-+<h1>연습 끝</h1>
-+<p>이제 <strong>2분 본 과제</strong>입니다. 커서를 가운데 원 안에 최대한 오래 두세요.</p>
-diff --git a/includes/instructions/korean/03_task2_intro.txt b/includes/instructions/korean/03_task2_intro.txt
-new file mode 100644
-index 0000000..9eb6a1e
---- /dev/null
-+++ b/includes/instructions/korean/03_task2_intro.txt
-@@ -0,0 +1,8 @@
-+<h1>과제 2. 네 가지 일 동시에 하기</h1>
-+
-+<p>이제 실제 조종사처럼 <strong>네 가지 일을 동시에</strong> 맡습니다. 여러 무인기와 자동화 장비를 혼자 감독하는 상황을 단순하게 옮긴 것입니다.</p>
-+
-+<p>다음 화면부터는 <strong>실제 과제 화면을 보면서</strong> 한 칸씩 설명합니다. 설명하는 칸은 <strong>주황색 테두리</strong>로 표시됩니다. 설명을 읽은 뒤 그 칸만 잠깐 직접 해 봅니다.</p>
-+
-+<p>키 배치는 이렇게 외우면 쉽습니다.</p>
-+<p>· 숫자 줄 <strong>1 2 3 4 5 6</strong> : 시스템 감시<br>· 가운데 두 줄 <strong>Q W E R / A S D F</strong> : 연료 펌프<br>· 아랫줄 <strong>Z X C V B</strong> : 교신<br>· 마우스 : 추적</p>
-diff --git a/includes/instructions/korean/04_overview.txt b/includes/instructions/korean/04_overview.txt
-new file mode 100644
-index 0000000..9595009
---- /dev/null
-+++ b/includes/instructions/korean/04_overview.txt
-@@ -0,0 +1,3 @@
-+<h1>화면 구성</h1>
-+<p>왼쪽 위 <strong>시스템 감시</strong>, 가운데 위 <strong>추적</strong>, 왼쪽 아래 <strong>교신</strong>, 가운데 아래 <strong>연료 관리</strong>입니다. 오른쪽 아래는 펌프가 실제로 얼마나 흐르는지 보여 주는 표시판입니다.</p>
-+<p>지금은 화면이 멈춰 있습니다. 하나씩 배워 봅시다.</p>
-diff --git a/includes/instructions/korean/05_sysmon.txt b/includes/instructions/korean/05_sysmon.txt
-new file mode 100644
-index 0000000..61d68b0
---- /dev/null
-+++ b/includes/instructions/korean/05_sysmon.txt
-@@ -0,0 +1,5 @@
-+<h1>시스템 감시 (왼쪽 위)</h1>
-+<p>계기 4개와 등 2개를 지켜보다가, 이상이 생기면 해당 키를 눌러 바로잡습니다.</p>
-+<p>· 계기의 화살표가 가운데를 벗어나 <strong>위나 아래 끝으로 치우치면</strong> 그 계기 번호 <strong>1~4</strong><br>· 평소 켜져 있는 <strong>초록 등(5)이 꺼지면</strong> 5<br>· 평소 꺼져 있는 <strong>빨간 등(6)이 켜지면</strong> 6</p>
-+<p>이 칸에는 <strong>자동 감시 장치</strong>가 있어 이상의 일부를 스스로 고칩니다(칸 아래 "자동" 표시). 하지만 <strong>자주 놓칩니다.</strong> 몇 초가 지나도 그대로인 이상은 직접 처리하세요. 10초 안에 처리하지 않으면 놓친 것으로 기록됩니다.</p>
-+<p>스페이스 바를 누르면 이 칸만 <strong>30초</strong> 동안 직접 해 봅니다.</p>
-diff --git a/includes/instructions/korean/06_comm.txt b/includes/instructions/korean/06_comm.txt
-new file mode 100644
-index 0000000..1de48c2
---- /dev/null
-+++ b/includes/instructions/korean/06_comm.txt
-@@ -0,0 +1,5 @@
-+<h1>교신 (왼쪽 아래)</h1>
-+<p>스피커에서 관제 음성이 나옵니다. 맨 위에 적힌 <strong>내 호출부호</strong>(영문 3자와 숫자 3자)를 부를 때만 반응하세요. 다른 호출부호는 무시합니다.</p>
-+<p>음성은 예를 들어 "에이 비 씨 하나 둘 삼, … 무전기 <strong>컴 원</strong>, 주파수 <strong>하나 둘 여섯 점 오</strong>"처럼 나옵니다. 숫자는 무전 방식으로 읽습니다(하나, 둘, 삼, 넷, 오, 여섯, 칠, 팔, 아홉, 공).</p>
-+<p>· <strong>Z / X</strong> : 무전기 고르기(위 / 아래)<br>· <strong>C / V</strong> : 누르고 있는 동안 주파수 내리기 / 올리기<br>· <strong>B</strong> : 맞췄으면 확인</p>
-+<p>스페이스 바를 누르면 이 칸만 <strong>45초</strong> 동안 직접 해 봅니다. 소리를 켜 두세요.</p>
-diff --git a/includes/instructions/korean/07_resman.txt b/includes/instructions/korean/07_resman.txt
-new file mode 100644
-index 0000000..200648b
---- /dev/null
-+++ b/includes/instructions/korean/07_resman.txt
-@@ -0,0 +1,7 @@
-+<h1>연료 관리 (가운데 아래)</h1>
-+<p>위쪽 큰 탱크 <strong>A와 B</strong>는 계속 연료를 씁니다. 두 탱크의 연료를 <strong>탱크 옆의 표시 범위 안</strong>에 유지하는 것이 목표입니다.</p>
-+<newpage>
-+<h1>연료 관리 : 펌프</h1>
-+<p>삼각형이 펌프이고, 펌프에 적힌 글자 키를 누를 때마다 켜지고 꺼집니다. 켜진 펌프는 초록색이 되고 화살표 방향으로 연료를 옮깁니다. 빨간 펌프는 고장이라 잠시 쓸 수 없습니다.</p>
-+<p>· 아래 탱크 C, D는 A, B에 연료를 보내고, 맨 아래 E, F는 연료가 무한합니다.<br>· 펌프 키 : <strong>Q W E R</strong> (A, B를 채움) / <strong>A S</strong> (C, D를 채움) / <strong>D F</strong> (A와 B 사이)</p>
-+<p>스페이스 바를 누르면 이 칸만 <strong>45초</strong> 동안 직접 해 봅니다.</p>
-diff --git a/includes/instructions/korean/08_all.txt b/includes/instructions/korean/08_all.txt
-new file mode 100644
-index 0000000..6cbf869
---- /dev/null
-+++ b/includes/instructions/korean/08_all.txt
-@@ -0,0 +1,3 @@
-+<h1>네 가지를 함께</h1>
-+<p>이제 네 칸이 모두 움직입니다. 추적(마우스)을 하면서 감시·교신·연료를 함께 챙기세요. 어느 하나만 하지 말고 고르게 신경 쓰는 것이 중요합니다.</p>
-+<p>스페이스 바를 누르면 <strong>1분 연습</strong>을 합니다. 연습은 점수에 들어가지 않습니다.</p>
-diff --git a/includes/instructions/korean/09_main.txt b/includes/instructions/korean/09_main.txt
-new file mode 100644
-index 0000000..1a7c527
---- /dev/null
-+++ b/includes/instructions/korean/09_main.txt
-@@ -0,0 +1,4 @@
-+<h1>본 과제 시작</h1>
-+<p>이제 <strong>10분 본 과제</strong>입니다. 중간에 멈출 수 없으니 끝까지 이 화면에 머물러 주세요.</p>
-+<p>네 가지 일 모두 중요합니다. 자동 감시는 자주 놓친다는 점을 기억하세요.</p>
-+<p>준비되면 스페이스 바를 누르세요.</p>
-diff --git a/includes/instructions/korean/10_end.txt b/includes/instructions/korean/10_end.txt
++<p>왼손은 키보드, 오른손은 마우스에 두세요. 다른 창으로 가면 과제가 멈추니 끝날 때까지 이 화면에 머물러 주세요. 소리를 켜 두세요.</p>
+diff --git a/includes/instructions/korean/99_end.txt b/includes/instructions/korean/99_end.txt
 new file mode 100644
 index 0000000..a801751
 --- /dev/null
-+++ b/includes/instructions/korean/10_end.txt
++++ b/includes/instructions/korean/99_end.txt
 @@ -0,0 +1,3 @@
 +<h1>수고하셨습니다</h1>
 +<p>과제가 모두 끝났습니다. 스페이스 바를 누르면 다음 화면에 <strong>결과 코드</strong>가 나옵니다.</p>
 +<p>그 코드를 복사해 설문지에 붙여 넣어야 참여가 완료됩니다.</p>
+diff --git a/includes/instructions/korean/A1_track.txt b/includes/instructions/korean/A1_track.txt
+new file mode 100644
+index 0000000..0a3a5a2
+--- /dev/null
++++ b/includes/instructions/korean/A1_track.txt
+@@ -0,0 +1,4 @@
++<h1>과제 1. 추적 (가운데 위)</h1>
++<p>주황 테두리 안의 <strong>초록 원이 여러분의 커서</strong>입니다. 커서는 저절로 계속 가운데에서 벗어나려 합니다.</p>
++<p><strong>마우스를 움직이면 커서가 그만큼 움직입니다.</strong> 버튼은 누르지 않아도 됩니다. 커서를 <strong>가운데 원 안</strong>에 최대한 오래 두세요. 원 밖으로 나가면 커서가 빨갛게 바뀝니다.</p>
++<p>스페이스 바를 누른 뒤 <strong>화면을 한 번 클릭</strong>하면 마우스 화살표가 사라지고 추적이 시작됩니다. 20초 동안 연습합니다.</p>
+diff --git a/includes/instructions/korean/A2_comm.txt b/includes/instructions/korean/A2_comm.txt
+new file mode 100644
+index 0000000..c7d6957
+--- /dev/null
++++ b/includes/instructions/korean/A2_comm.txt
+@@ -0,0 +1,4 @@
++<h1>교신 (왼쪽 아래)</h1>
++<p>관제 음성이 호출부호를 부르고 무전기와 주파수를 알려 줍니다. 맨 위에 적힌 <strong>내 호출부호</strong>를 부를 때만 반응합니다.</p>
++<p>· <strong>↑ ↓</strong> : 무전기 고르기 (화살표 표시가 옮겨 갑니다)<br>· <strong>← →</strong> : 주파수 내리기 / 올리기 (누르고 있으면 계속 바뀝니다)<br>· <strong>Enter</strong> : 무전기와 주파수를 다 맞췄으면 확인</p>
++<p>스페이스 바를 누르면 내 호출부호로 지시가 나옵니다. 그대로 맞추고 Enter를 누르면 다음으로 넘어갑니다.</p>
+diff --git a/includes/instructions/korean/A3_comm_other.txt b/includes/instructions/korean/A3_comm_other.txt
+new file mode 100644
+index 0000000..5053012
+--- /dev/null
++++ b/includes/instructions/korean/A3_comm_other.txt
+@@ -0,0 +1,3 @@
++<h1>잘했습니다</h1>
++<p>이번에는 <strong>다른 호출부호</strong>를 부릅니다. 내 호출부호가 아니면 <strong>아무것도 누르지 마세요.</strong></p>
++<p>스페이스 바를 누르고 들어 보세요(약 12초).</p>
+diff --git a/includes/instructions/korean/A4_both.txt b/includes/instructions/korean/A4_both.txt
+new file mode 100644
+index 0000000..2d005af
+--- /dev/null
++++ b/includes/instructions/korean/A4_both.txt
+@@ -0,0 +1,3 @@
++<h1>둘을 함께</h1>
++<p>이제 <strong>추적을 하면서 교신</strong>도 처리합니다. 음성을 듣는 동안에도 커서를 놓치지 마세요.</p>
++<p>스페이스 바를 누르면 <strong>40초 연습</strong>을 합니다. 화면을 클릭해야 추적이 시작됩니다.</p>
+diff --git a/includes/instructions/korean/A5_main.txt b/includes/instructions/korean/A5_main.txt
+new file mode 100644
+index 0000000..c05d76c
+--- /dev/null
++++ b/includes/instructions/korean/A5_main.txt
+@@ -0,0 +1,3 @@
++<h1>과제 1 본 과제</h1>
++<p>이제 <strong>2분 30초 본 과제</strong>입니다. 추적과 교신 둘 다 점수에 들어갑니다.</p>
++<p>준비되면 스페이스 바를 누르세요.</p>
+diff --git a/includes/instructions/korean/B0_intro.txt b/includes/instructions/korean/B0_intro.txt
+new file mode 100644
+index 0000000..a6e79ef
+--- /dev/null
++++ b/includes/instructions/korean/B0_intro.txt
+@@ -0,0 +1,7 @@
++<h1>과제 2. 네 가지 일 동시에 하기</h1>
++
++<p>과제 1의 추적과 교신에 <strong>시스템 감시</strong>와 <strong>연료 관리</strong>가 더해집니다. 여러 무인기와 자동화 장비를 혼자 감독하는 상황을 단순하게 옮긴 것입니다.</p>
++
++<p>새로 나오는 두 칸은 <strong>실제 과제 화면을 보면서</strong> 설명합니다. 설명하는 곳은 <strong>주황 테두리</strong>로 표시되고, 설명을 읽은 뒤 그 칸만 잠깐 직접 해 봅니다.</p>
++
++<p>키 배치<br>· 숫자 <strong>1~6</strong> : 시스템 감시<br>· <strong>Q W E R / A S D F</strong> : 연료 펌프<br>· <strong>화살표, Enter</strong> : 교신<br>· 마우스 : 추적</p>
+diff --git a/includes/instructions/korean/B1_overview.txt b/includes/instructions/korean/B1_overview.txt
+new file mode 100644
+index 0000000..fb9ec1e
+--- /dev/null
++++ b/includes/instructions/korean/B1_overview.txt
+@@ -0,0 +1,3 @@
++<h1>화면 구성</h1>
++<p>왼쪽 위 <strong>시스템 감시</strong>, 가운데 위 <strong>추적</strong>, 왼쪽 아래 <strong>교신</strong>, 가운데 아래 <strong>연료 관리</strong>입니다. 오른쪽 아래는 펌프마다 연료가 실제로 얼마나 흐르는지 보여 주는 표시판입니다.</p>
++<p>지금은 화면이 멈춰 있습니다. 새로 나온 두 칸을 하나씩 배워 봅시다.</p>
+diff --git a/includes/instructions/korean/B2_sysmon.txt b/includes/instructions/korean/B2_sysmon.txt
+new file mode 100644
+index 0000000..a4fff99
+--- /dev/null
++++ b/includes/instructions/korean/B2_sysmon.txt
+@@ -0,0 +1,5 @@
++<h1>시스템 감시 (왼쪽 위)</h1>
++<p>계기 4개와 등 2개를 지켜보다가, 이상이 생기면 해당 키를 눌러 바로잡습니다.</p>
++<p>· 계기의 화살표가 가운데를 벗어나 <strong>위나 아래 끝으로 치우치면</strong> 그 계기 번호 <strong>1~4</strong><br>· 평소 켜져 있는 <strong>초록 등(5)이 꺼지면</strong> 5<br>· 평소 꺼져 있는 <strong>빨간 등(6)이 켜지면</strong> 6</p>
++<p>이 칸에는 <strong>자동 감시 장치</strong>가 있어 이상의 일부를 스스로 고칩니다. 하지만 <strong>자주 놓칩니다.</strong> 몇 초가 지나도 그대로인 이상은 직접 처리하세요. 10초 안에 처리하지 않으면 놓친 것으로 기록됩니다.</p>
++<p>스페이스 바를 누르면 이 칸만 <strong>30초</strong> 동안 직접 해 봅니다.</p>
+diff --git a/includes/instructions/korean/B3_resman_goal.txt b/includes/instructions/korean/B3_resman_goal.txt
+new file mode 100644
+index 0000000..ccebc53
+--- /dev/null
++++ b/includes/instructions/korean/B3_resman_goal.txt
+@@ -0,0 +1,3 @@
++<h1>연료 관리 (가운데 아래) : 목표</h1>
++<p>할 일은 하나입니다. 위쪽 큰 탱크 <strong>A와 B</strong>의 연료를 <strong>2,250 ~ 2,750</strong> 사이로 유지하세요. 탱크 아래 숫자가 현재 연료량이고, 탱크 옆 <strong>검은 표시</strong>가 목표 높이(2,500)입니다.</p>
++<p>A와 B는 가만히 두면 계속 줄어듭니다. 아래쪽 탱크(C, D, E, F)는 연료를 보내 주는 창고일 뿐이라 맞출 필요가 없습니다.</p>
+diff --git a/includes/instructions/korean/B4_resman_pumps.txt b/includes/instructions/korean/B4_resman_pumps.txt
+new file mode 100644
+index 0000000..df51052
+--- /dev/null
++++ b/includes/instructions/korean/B4_resman_pumps.txt
+@@ -0,0 +1,4 @@
++<h1>연료 관리 : 펌프로 채우기</h1>
++<p>삼각형이 <strong>펌프</strong>이고, 안에 적힌 글자가 그 펌프의 키입니다. 키를 한 번 누르면 켜지고(초록), 다시 누르면 꺼집니다. 켜진 펌프는 화살표 방향으로 연료를 옮깁니다.</p>
++<p>· A를 채우는 펌프 : <strong>Q, W</strong> (테두리)<br>· B를 채우는 펌프 : <strong>E, R</strong> (오른쪽 같은 자리)</p>
++<p>요령 : A나 B가 2,250 아래로 내려가면 그쪽 펌프를 켜고, 2,750 위로 올라가면 끄세요.</p>
+diff --git a/includes/instructions/korean/B5_resman_more.txt b/includes/instructions/korean/B5_resman_more.txt
+new file mode 100644
+index 0000000..3e8e356
+--- /dev/null
++++ b/includes/instructions/korean/B5_resman_more.txt
+@@ -0,0 +1,3 @@
++<h1>연료 관리 : 알아 두면 좋은 것</h1>
++<p>· <strong>C와 D</strong>는 양이 정해진 창고입니다. 비면 Q나 E 펌프를 켜도 연료가 오지 않습니다. 그때는 <strong>A, S</strong> 펌프로 E, F에서 채울 수 있습니다. E와 F는 연료가 무한합니다.<br>· <strong>D, F</strong> 펌프는 A와 B 사이로 연료를 옮깁니다. 한쪽만 넘칠 때 씁니다.<br>· <strong>빨간 펌프</strong>는 고장이라 잠시 쓸 수 없습니다.</p>
++<p>스페이스 바를 누르면 이 칸만 <strong>45초</strong> 동안 직접 해 봅니다.</p>
+diff --git a/includes/instructions/korean/B6_all.txt b/includes/instructions/korean/B6_all.txt
+new file mode 100644
+index 0000000..817c514
+--- /dev/null
++++ b/includes/instructions/korean/B6_all.txt
+@@ -0,0 +1,3 @@
++<h1>네 가지를 함께</h1>
++<p>이제 네 칸이 모두 움직입니다. 추적을 하면서 감시, 교신, 연료를 함께 챙기세요. 어느 하나만 하지 말고 고르게 신경 쓰는 것이 중요합니다.</p>
++<p>스페이스 바를 누르면 <strong>1분 연습</strong>을 합니다. 연습은 점수에 들어가지 않습니다. 화면을 클릭해야 추적이 시작됩니다.</p>
+diff --git a/includes/instructions/korean/B7_main.txt b/includes/instructions/korean/B7_main.txt
+new file mode 100644
+index 0000000..cda0d58
+--- /dev/null
++++ b/includes/instructions/korean/B7_main.txt
+@@ -0,0 +1,4 @@
++<h1>과제 2 본 과제</h1>
++<p>이제 <strong>5분 본 과제</strong>입니다. 중간에 멈출 수 없으니 끝까지 이 화면에 머물러 주세요.</p>
++<p>네 가지 일 모두 점수에 들어갑니다. 자동 감시 장치는 자주 놓친다는 점을 기억하세요.</p>
++<p>준비되면 스페이스 바를 누르세요.</p>
 diff --git a/includes/scenarios/korean/make_study.py b/includes/scenarios/korean/make_study.py
 new file mode 100644
-index 0000000..cae9678
+index 0000000..1884a30
 --- /dev/null
 +++ b/includes/scenarios/korean/make_study.py
-@@ -0,0 +1,174 @@
-+"""Generate study.txt (Korean study scenario) and phases.json (scoring windows, in scenario seconds).
+@@ -0,0 +1,209 @@
++"""Generate study.txt (Korean study scenario) with its scoring windows (PHASES line, scenario seconds).
 +
-+Task 1: single tracking (30 s practice, 120 s scored).
-+Task 2: guided tutorial on the live task screen, 60 s combined practice, then a 10-minute block whose system
-+monitoring events replicate the low-reliability block of Parasuraman, Molloy and Singh (1993) shipped with OpenMATB
-+(16 malfunctions, 9 solved by the automation), with communications prompts and pump failures added.
++Task 1 (like the multitasking subtest of the Air Force pilot aptitude test K-PAT): tracking and communications at
++the same time, no automation. Tutorial, then 150 s scored.
++Task 2: the four tasks. Guided tutorial on the live task screen, 60 s combined practice, then a 5-minute block whose
++system monitoring events follow the low-reliability block of Parasuraman, Molloy and Singh (1993) shipped with
++OpenMATB (automation that misses half of the malfunctions), with communications prompts and pump failures.
 +
-+Scenario time stops while instructions/guide slides are shown, so the windows below are exact.
++Scenario time stops while instructions/guide slides are shown, so the windows are exact. The communications
++tutorial step ends at the first correct response (gate plugin): the scenario then jumps to the end of the step.
 +"""
 +
 +import json
@@ -493,9 +614,10 @@ index 0000000..cae9678
 +    ev(sec, "instructions", "start")
 +
 +
-+def guide(sec: float, filename: str, area: str, highlight: str = "none") -> None:
++def guide(sec: float, filename: str, area: str, highlight: str = "none", box: str = "0,0,1,1") -> None:
 +    ev(sec, "guide", "area", area)
 +    ev(sec, "guide", "highlight", highlight)
++    ev(sec, "guide", "highlightbox", box)
 +    ev(sec, "guide", "filename", f"korean/{filename}")
 +    ev(sec, "guide", "start")
 +
@@ -515,10 +637,9 @@ index 0000000..cae9678
 +
 +lines += [
 +    "# Korean adaptation of OpenMATB for a selection study (2026). Generated by make_study.py: edit that file.",
-+    "# Keys without a numeric keypad: sysmon 1-6, pumps Q W E R A S D F, communications Z X C V + B.",
++    "# Keys without a numeric keypad: sysmon 1-6, pumps Q W E R A S D F, communications arrows + Enter, tracking by mouse.",
 +]
 +note("Settings")
-+ev(0, "system", "mousecontrol", "True")
 +for i in range(1, 5):
 +    ev(0, "sysmon", f"scales-{i}-name", str(i))
 +    ev(0, "sysmon", f"scales-{i}-key", f"_{i}")
@@ -531,36 +652,78 @@ index 0000000..cae9678
 +ev(0, "sysmon", "alerttimeout", "10000")
 +for n, key in enumerate("QWERASDF", start=1):
 +    ev(0, "resman", f"pump-{n}-key", key)
-+for name, key in [("selectradioup", "Z"), ("selectradiodown", "X"), ("tunefrequencydown", "C"),
-+                  ("tunefrequencyup", "V"), ("validateresponse", "B")]:
-+    ev(0, "communications", f"keys-{name}", key)
++# Communications: default OpenMATB keys (arrows to select the radio and tune, Enter to validate)
 +ev(0, "communications", "voiceidiom", "korean")
 +ev(0, "communications", "voicegender", "tts")
 +ev(0, "track", "cursorcolor", "#009900")
++ev(0, "track", "mousemove", "True")  # The cursor follows the mouse movements (pointer hidden)
 +
-+# ---------------- Task 1: tracking only ----------------
-+note("Task 1: tracking alone")
++
++def comm_tutorial_feedback(sec: float, on: bool) -> None:
++    ev(sec, "communications", "feedbacks-positive-active", str(on))
++    ev(sec, "communications", "feedbacks-negative-active", str(on))
++
++
++# ---------------- Task 1: tracking + communications (like the multitasking subtest of the K-PAT) ----------------
++note("Task 1: tutorial")
 +slides(0, "01_welcome.txt")
 +ev(0, "track", "start")
-+A_PRACTICE, A_START, A_END = 0, 30, 150
-+guide(A_START, "02_track_main.txt", "bottom", "topmid")
-+ev(A_END, "track", "stop")
++ev(0, "communications", "start")
++T = 1  # Let the tasks draw themselves before the guides freeze the screen
++ev(T, "communications", "pause")
++guide(T, "A1_track.txt", "bottom", "topmid")
++T += 20
++ev(T, "track", "pause")
 +
-+# ---------------- Task 2: guided tutorial on the live screen ----------------
++note("Tutorial: communications alone, the step ends with the first correct response (plugins/gate.py)")
++COMM_STEP = 60
++ev(T, "communications", "maxresponsedelay", str((COMM_STEP - 5) * 1000))
++comm_tutorial_feedback(T, True)
++guide(T, "A2_comm.txt", "right", "bottomleft")
++ev(T, "communications", "resume")
++ev(T, "communications", "radioprompt", "own")
++ev(T, "gate", "skipto", str(T + COMM_STEP))
++ev(T, "gate", "start")
++T += COMM_STEP
++ev(T, "gate", "stop")  # Already stopped when passed: the scenario checker requires a stop command
++ev(T, "communications", "maxresponsedelay", "20000")
++
++note("Tutorial: another callsign (no response)")
++guide(T, "A3_comm_other.txt", "right", "bottomleft")
++ev(T + 1, "communications", "radioprompt", "other")
++T += 20  # Each word is spoken separately: a prompt lasts about 15 s
++
++note("Tutorial: tracking and communications together (40 s)")
++ev(T, "track", "resume")
++guide(T, "A4_both.txt", "center")
++ev(T + 6, "communications", "radioprompt", "own")
++T += 40
++comm_tutorial_feedback(T, False)
++
++A_START = T
++note("Task 1: scored block (150 s)")
++guide(T, "A5_main.txt", "center")
++# A prompt lasts about 15 s, then 20 s to respond: a new prompt never cuts the previous one
++for sec in (8, 38, 68, 104):
++    ev(A_START + sec, "communications", "radioprompt", "own")
++for sec in (26, 56, 88, 125):
++    ev(A_START + sec, "communications", "radioprompt", "other")
++A_END = A_START + 150
++
++# ---------------- Task 2: four tasks, guided tutorial on the live screen ----------------
 +T = A_END
 +note("Task 2: tutorial")
-+slides(T, "03_task2_intro.txt")
-+for plugin in ("sysmon", "track", "communications", "resman"):
-+    ev(T, plugin, "start")
-+# Let every task draw itself for 1 s before the guides freeze the screen (a task paused before its first
-+# update stays blank)
++ev(T, "track", "pause")
++ev(T, "communications", "pause")
++slides(T, "B0_intro.txt")
++ev(T, "sysmon", "start")
++ev(T, "resman", "start")
 +T += 1
-+for plugin in ("track", "communications", "resman"):
-+    ev(T, plugin, "pause")
-+guide(T, "04_overview.txt", "center")
++ev(T, "resman", "pause")
++guide(T, "B1_overview.txt", "center")
 +
 +note("Tutorial: system monitoring alone (30 s)")
-+guide(T, "05_sysmon.txt", "right", "topleft")
++guide(T, "B2_sysmon.txt", "right", "topleft")
 +# The automatic solver is one switch for the whole task: an automated failure must not overlap a manual one
 +sysmon_failure(T + 3, "scales-2", False, "up")
 +sysmon_failure(T + 14, "scales-4", True, "down")
@@ -568,24 +731,18 @@ index 0000000..cae9678
 +T += 30
 +ev(T, "sysmon", "pause")
 +
-+note("Tutorial: communications alone (45 s)")
-+ev(T, "communications", "resume")
-+guide(T, "06_comm.txt", "right", "bottomleft")
-+ev(T + 1, "communications", "radioprompt", "own")
-+ev(T + 22, "communications", "radioprompt", "other")
-+T += 45
-+ev(T, "communications", "pause")
-+
 +note("Tutorial: resources management alone (45 s)")
 +ev(T, "resman", "resume")
-+guide(T, "07_resman.txt", "top", "bottommid")
++guide(T, "B3_resman_goal.txt", "top", "bottommid", "0.11,0.43,0.71,0.40")
++guide(T, "B4_resman_pumps.txt", "top", "bottommid", "0.07,0.45,0.32,0.15")
++guide(T, "B5_resman_more.txt", "top", "bottommid")
 +pump_failure(T + 15, T + 30, 2)
 +T += 45
 +
 +note("Tutorial: all tasks together (60 s, not scored)")
 +for plugin in ("sysmon", "track", "communications"):
 +    ev(T, plugin, "resume")
-+guide(T, "08_all.txt", "center")
++guide(T, "B6_all.txt", "center")
 +sysmon_failure(T + 5, "scales-1", False, "down")
 +ev(T + 9, "communications", "radioprompt", "own")
 +sysmon_failure(T + 24, "lights-2", True)
@@ -594,55 +751,51 @@ index 0000000..cae9678
 +sysmon_failure(T + 44, "scales-3", False, "up")
 +T += 60
 +
-+# ---------------- Task 2: scored block (10 min) ----------------
++# ---------------- Task 2: scored block (5 min) ----------------
 +B_START = T
-+note("Task 2: scored block (600 s)")
-+guide(T, "09_main.txt", "center")
-+# System monitoring: low-reliability block of Parasuraman et al. (1993), as in
-+# includes/scenarios/Parasuraman_et_al_1993/low_reliability_block.txt (times, gauges, automation)
-+PARASURAMAN = [
-+    ("0:00:34", "scales-1", "down", True), ("0:00:59", "scales-3", "up", True),
-+    ("0:01:42", "scales-2", "down", False), ("0:02:03", "scales-1", "up", True),
-+    ("0:02:58", "scales-4", "down", False), ("0:03:26", "scales-2", "down", False),
-+    ("0:04:04", "scales-1", "up", True), ("0:04:28", "lights-2", None, False),
-+    ("0:05:38", "scales-4", "down", False), ("0:06:12", "scales-2", "up", False),
-+    ("0:06:30", "lights-2", None, True), ("0:07:14", "scales-1", "down", True),
-+    ("0:07:55", "scales-3", "up", True), ("0:08:17", "scales-1", "down", False),
-+    ("0:08:55", "lights-1", None, False), ("0:09:31", "scales-4", "down", True),
++note("Task 2: scored block (300 s)")
++guide(T, "B7_main.txt", "center")
++# System monitoring: the first 12 malfunctions of the low-reliability block of Parasuraman, Molloy and Singh (1993)
++# shipped with OpenMATB (includes/scenarios/Parasuraman_et_al_1993/low_reliability_block.txt), same gauges and
++# automation (6 solved by the automation, 6 missed by it), on a 5-minute time line. At least 18 s apart, so that a
++# manual failure (10 s timeout) never overlaps an automated one.
++SYSMON = [
++    (15, "scales-1", "down", True), (38, "scales-3", "up", True), (60, "scales-2", "down", False),
++    (82, "scales-1", "up", True), (101, "scales-4", "down", False), (125, "scales-2", "down", False),
++    (148, "scales-1", "up", True), (170, "lights-2", None, False), (193, "scales-4", "down", False),
++    (218, "scales-2", "up", False), (244, "lights-2", None, True), (270, "scales-1", "down", True),
 +]
-+for stamp, gauge, side, auto in PARASURAMAN:
-+    h, m, s = (int(x) for x in stamp.split(":"))
-+    sysmon_failure(B_START + h * 3600 + m * 60 + s, gauge, auto, side)
-+# Communications: 10 own and 8 other prompts, not within 6 s of a malfunction
-+for sec in (20, 78, 133, 190, 252, 300, 362, 418, 482, 545):
++for sec, gauge, side, auto in SYSMON:
++    sysmon_failure(B_START + sec, gauge, auto, side)
++# Communications: 8 own and 4 other prompts, not within 6 s of a malfunction
++for sec in (8, 46, 90, 116, 156, 201, 226, 262):
 +    ev(B_START + sec, "communications", "radioprompt", "own")
-+for sec in (48, 108, 160, 222, 330, 395, 455, 515):
++for sec in (30, 72, 138, 182):
 +    ev(B_START + sec, "communications", "radioprompt", "other")
-+# Resources management: four pump failures of 20 s
-+for start, pump in ((88, 1), (205, 3), (322, 2), (447, 4)):
++# Resources management: three pump failures of 20 s
++for start, pump in ((50, 1), (150, 3), (235, 2)):
 +    pump_failure(B_START + start, B_START + start + 20, pump)
-+B_END = B_START + 600
++B_END = B_START + 300
 +for plugin in ("sysmon", "track", "communications", "resman"):
 +    ev(B_END, plugin, "stop")
-+slides(B_END, "10_end.txt")
++slides(B_END, "99_end.txt")
 +
 +
-+PHASES = {"A_main": [A_START, A_END], "B_main": [B_START, B_END], "A_practice": [A_PRACTICE, A_START]}
++PHASES = {"A_main": [A_START, A_END], "B_main": [B_START, B_END]}
 +lines.insert(2, "# PHASES " + json.dumps(PHASES))  # Read by core/korean_score.py
 +(HERE / "study.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 +print(f"study.txt: {len(lines)} lines, task 1 {A_START}-{A_END} s, task 2 block {B_START}-{B_END} s")
 diff --git a/includes/scenarios/korean/study.txt b/includes/scenarios/korean/study.txt
 new file mode 100644
-index 0000000..707b295
+index 0000000..7067738
 --- /dev/null
 +++ b/includes/scenarios/korean/study.txt
-@@ -0,0 +1,183 @@
+@@ -0,0 +1,218 @@
 +# Korean adaptation of OpenMATB for a selection study (2026). Generated by make_study.py: edit that file.
-+# Keys without a numeric keypad: sysmon 1-6, pumps Q W E R A S D F, communications Z X C V + B.
-+# PHASES {"A_main": [30, 150], "B_main": [331, 931], "A_practice": [0, 30]}
++# Keys without a numeric keypad: sysmon 1-6, pumps Q W E R A S D F, communications arrows + Enter, tracking by mouse.
++# PHASES {"A_main": [141, 291], "B_main": [427, 727]}
 +
 +# Settings
-+0:00:00;system;mousecontrol;True
 +0:00:00;sysmon;scales-1-name;1
 +0:00:00;sysmon;scales-1-key;_1
 +0:00:00;sysmon;scales-2-name;2
@@ -666,160 +819,196 @@ index 0000000..707b295
 +0:00:00;resman;pump-6-key;S
 +0:00:00;resman;pump-7-key;D
 +0:00:00;resman;pump-8-key;F
-+0:00:00;communications;keys-selectradioup;Z
-+0:00:00;communications;keys-selectradiodown;X
-+0:00:00;communications;keys-tunefrequencydown;C
-+0:00:00;communications;keys-tunefrequencyup;V
-+0:00:00;communications;keys-validateresponse;B
 +0:00:00;communications;voiceidiom;korean
 +0:00:00;communications;voicegender;tts
 +0:00:00;track;cursorcolor;#009900
++0:00:00;track;mousemove;True
 +
-+# Task 1: tracking alone
++# Task 1: tutorial
 +0:00:00;instructions;filename;korean/01_welcome.txt
 +0:00:00;instructions;start
 +0:00:00;track;start
-+0:00:30;guide;area;bottom
-+0:00:30;guide;highlight;topmid
-+0:00:30;guide;filename;korean/02_track_main.txt
-+0:00:30;guide;start
-+0:02:30;track;stop
++0:00:00;communications;start
++0:00:01;communications;pause
++0:00:01;guide;area;bottom
++0:00:01;guide;highlight;topmid
++0:00:01;guide;highlightbox;0,0,1,1
++0:00:01;guide;filename;korean/A1_track.txt
++0:00:01;guide;start
++0:00:21;track;pause
++
++# Tutorial: communications alone, the step ends with the first correct response (plugins/gate.py)
++0:00:21;communications;maxresponsedelay;55000
++0:00:21;communications;feedbacks-positive-active;True
++0:00:21;communications;feedbacks-negative-active;True
++0:00:21;guide;area;right
++0:00:21;guide;highlight;bottomleft
++0:00:21;guide;highlightbox;0,0,1,1
++0:00:21;guide;filename;korean/A2_comm.txt
++0:00:21;guide;start
++0:00:21;communications;resume
++0:00:21;communications;radioprompt;own
++0:00:21;gate;skipto;81
++0:00:21;gate;start
++0:01:21;gate;stop
++0:01:21;communications;maxresponsedelay;20000
++
++# Tutorial: another callsign (no response)
++0:01:21;guide;area;right
++0:01:21;guide;highlight;bottomleft
++0:01:21;guide;highlightbox;0,0,1,1
++0:01:21;guide;filename;korean/A3_comm_other.txt
++0:01:21;guide;start
++0:01:22;communications;radioprompt;other
++
++# Tutorial: tracking and communications together (40 s)
++0:01:41;track;resume
++0:01:41;guide;area;center
++0:01:41;guide;highlight;none
++0:01:41;guide;highlightbox;0,0,1,1
++0:01:41;guide;filename;korean/A4_both.txt
++0:01:41;guide;start
++0:01:47;communications;radioprompt;own
++0:02:21;communications;feedbacks-positive-active;False
++0:02:21;communications;feedbacks-negative-active;False
++
++# Task 1: scored block (150 s)
++0:02:21;guide;area;center
++0:02:21;guide;highlight;none
++0:02:21;guide;highlightbox;0,0,1,1
++0:02:21;guide;filename;korean/A5_main.txt
++0:02:21;guide;start
++0:02:29;communications;radioprompt;own
++0:02:59;communications;radioprompt;own
++0:03:29;communications;radioprompt;own
++0:04:05;communications;radioprompt;own
++0:02:47;communications;radioprompt;other
++0:03:17;communications;radioprompt;other
++0:03:49;communications;radioprompt;other
++0:04:26;communications;radioprompt;other
 +
 +# Task 2: tutorial
-+0:02:30;instructions;filename;korean/03_task2_intro.txt
-+0:02:30;instructions;start
-+0:02:30;sysmon;start
-+0:02:30;track;start
-+0:02:30;communications;start
-+0:02:30;resman;start
-+0:02:31;track;pause
-+0:02:31;communications;pause
-+0:02:31;resman;pause
-+0:02:31;guide;area;center
-+0:02:31;guide;highlight;none
-+0:02:31;guide;filename;korean/04_overview.txt
-+0:02:31;guide;start
++0:04:51;track;pause
++0:04:51;communications;pause
++0:04:51;instructions;filename;korean/B0_intro.txt
++0:04:51;instructions;start
++0:04:51;sysmon;start
++0:04:51;resman;start
++0:04:52;resman;pause
++0:04:52;guide;area;center
++0:04:52;guide;highlight;none
++0:04:52;guide;highlightbox;0,0,1,1
++0:04:52;guide;filename;korean/B1_overview.txt
++0:04:52;guide;start
 +
 +# Tutorial: system monitoring alone (30 s)
-+0:02:31;guide;area;right
-+0:02:31;guide;highlight;topleft
-+0:02:31;guide;filename;korean/05_sysmon.txt
-+0:02:31;guide;start
-+0:02:34;sysmon;automaticsolver;False
-+0:02:34;sysmon;scales-2-failure;up
-+0:02:45;sysmon;automaticsolver;True
-+0:02:45;sysmon;scales-4-failure;down
-+0:02:50;sysmon;automaticsolver;False
-+0:02:50;sysmon;lights-1-failure;True
-+0:03:01;sysmon;pause
-+
-+# Tutorial: communications alone (45 s)
-+0:03:01;communications;resume
-+0:03:01;guide;area;right
-+0:03:01;guide;highlight;bottomleft
-+0:03:01;guide;filename;korean/06_comm.txt
-+0:03:01;guide;start
-+0:03:02;communications;radioprompt;own
-+0:03:23;communications;radioprompt;other
-+0:03:46;communications;pause
++0:04:52;guide;area;right
++0:04:52;guide;highlight;topleft
++0:04:52;guide;highlightbox;0,0,1,1
++0:04:52;guide;filename;korean/B2_sysmon.txt
++0:04:52;guide;start
++0:04:55;sysmon;automaticsolver;False
++0:04:55;sysmon;scales-2-failure;up
++0:05:06;sysmon;automaticsolver;True
++0:05:06;sysmon;scales-4-failure;down
++0:05:11;sysmon;automaticsolver;False
++0:05:11;sysmon;lights-1-failure;True
++0:05:22;sysmon;pause
 +
 +# Tutorial: resources management alone (45 s)
-+0:03:46;resman;resume
-+0:03:46;guide;area;top
-+0:03:46;guide;highlight;bottommid
-+0:03:46;guide;filename;korean/07_resman.txt
-+0:03:46;guide;start
-+0:04:01;resman;pump-2-state;failure
-+0:04:16;resman;pump-2-state;off
++0:05:22;resman;resume
++0:05:22;guide;area;top
++0:05:22;guide;highlight;bottommid
++0:05:22;guide;highlightbox;0.11,0.43,0.71,0.40
++0:05:22;guide;filename;korean/B3_resman_goal.txt
++0:05:22;guide;start
++0:05:22;guide;area;top
++0:05:22;guide;highlight;bottommid
++0:05:22;guide;highlightbox;0.07,0.45,0.32,0.15
++0:05:22;guide;filename;korean/B4_resman_pumps.txt
++0:05:22;guide;start
++0:05:22;guide;area;top
++0:05:22;guide;highlight;bottommid
++0:05:22;guide;highlightbox;0,0,1,1
++0:05:22;guide;filename;korean/B5_resman_more.txt
++0:05:22;guide;start
++0:05:37;resman;pump-2-state;failure
++0:05:52;resman;pump-2-state;off
 +
 +# Tutorial: all tasks together (60 s, not scored)
-+0:04:31;sysmon;resume
-+0:04:31;track;resume
-+0:04:31;communications;resume
-+0:04:31;guide;area;center
-+0:04:31;guide;highlight;none
-+0:04:31;guide;filename;korean/08_all.txt
-+0:04:31;guide;start
-+0:04:36;sysmon;automaticsolver;False
-+0:04:36;sysmon;scales-1-failure;down
-+0:04:40;communications;radioprompt;own
-+0:04:55;sysmon;automaticsolver;True
-+0:04:55;sysmon;lights-2-failure;True
-+0:04:57;resman;pump-3-state;failure
-+0:05:12;resman;pump-3-state;off
-+0:05:04;communications;radioprompt;other
-+0:05:15;sysmon;automaticsolver;False
-+0:05:15;sysmon;scales-3-failure;up
++0:06:07;sysmon;resume
++0:06:07;track;resume
++0:06:07;communications;resume
++0:06:07;guide;area;center
++0:06:07;guide;highlight;none
++0:06:07;guide;highlightbox;0,0,1,1
++0:06:07;guide;filename;korean/B6_all.txt
++0:06:07;guide;start
++0:06:12;sysmon;automaticsolver;False
++0:06:12;sysmon;scales-1-failure;down
++0:06:16;communications;radioprompt;own
++0:06:31;sysmon;automaticsolver;True
++0:06:31;sysmon;lights-2-failure;True
++0:06:33;resman;pump-3-state;failure
++0:06:48;resman;pump-3-state;off
++0:06:40;communications;radioprompt;other
++0:06:51;sysmon;automaticsolver;False
++0:06:51;sysmon;scales-3-failure;up
 +
-+# Task 2: scored block (600 s)
-+0:05:31;guide;area;center
-+0:05:31;guide;highlight;none
-+0:05:31;guide;filename;korean/09_main.txt
-+0:05:31;guide;start
-+0:06:05;sysmon;automaticsolver;True
-+0:06:05;sysmon;scales-1-failure;down
-+0:06:30;sysmon;automaticsolver;True
-+0:06:30;sysmon;scales-3-failure;up
-+0:07:13;sysmon;automaticsolver;False
-+0:07:13;sysmon;scales-2-failure;down
-+0:07:34;sysmon;automaticsolver;True
-+0:07:34;sysmon;scales-1-failure;up
-+0:08:29;sysmon;automaticsolver;False
-+0:08:29;sysmon;scales-4-failure;down
-+0:08:57;sysmon;automaticsolver;False
-+0:08:57;sysmon;scales-2-failure;down
++# Task 2: scored block (300 s)
++0:07:07;guide;area;center
++0:07:07;guide;highlight;none
++0:07:07;guide;highlightbox;0,0,1,1
++0:07:07;guide;filename;korean/B7_main.txt
++0:07:07;guide;start
++0:07:22;sysmon;automaticsolver;True
++0:07:22;sysmon;scales-1-failure;down
++0:07:45;sysmon;automaticsolver;True
++0:07:45;sysmon;scales-3-failure;up
++0:08:07;sysmon;automaticsolver;False
++0:08:07;sysmon;scales-2-failure;down
++0:08:29;sysmon;automaticsolver;True
++0:08:29;sysmon;scales-1-failure;up
++0:08:48;sysmon;automaticsolver;False
++0:08:48;sysmon;scales-4-failure;down
++0:09:12;sysmon;automaticsolver;False
++0:09:12;sysmon;scales-2-failure;down
 +0:09:35;sysmon;automaticsolver;True
 +0:09:35;sysmon;scales-1-failure;up
-+0:09:59;sysmon;automaticsolver;False
-+0:09:59;sysmon;lights-2-failure;True
-+0:11:09;sysmon;automaticsolver;False
-+0:11:09;sysmon;scales-4-failure;down
-+0:11:43;sysmon;automaticsolver;False
-+0:11:43;sysmon;scales-2-failure;up
-+0:12:01;sysmon;automaticsolver;True
-+0:12:01;sysmon;lights-2-failure;True
-+0:12:45;sysmon;automaticsolver;True
-+0:12:45;sysmon;scales-1-failure;down
-+0:13:26;sysmon;automaticsolver;True
-+0:13:26;sysmon;scales-3-failure;up
-+0:13:48;sysmon;automaticsolver;False
-+0:13:48;sysmon;scales-1-failure;down
-+0:14:26;sysmon;automaticsolver;False
-+0:14:26;sysmon;lights-1-failure;True
-+0:15:02;sysmon;automaticsolver;True
-+0:15:02;sysmon;scales-4-failure;down
-+0:05:51;communications;radioprompt;own
-+0:06:49;communications;radioprompt;own
-+0:07:44;communications;radioprompt;own
-+0:08:41;communications;radioprompt;own
++0:09:57;sysmon;automaticsolver;False
++0:09:57;sysmon;lights-2-failure;True
++0:10:20;sysmon;automaticsolver;False
++0:10:20;sysmon;scales-4-failure;down
++0:10:45;sysmon;automaticsolver;False
++0:10:45;sysmon;scales-2-failure;up
++0:11:11;sysmon;automaticsolver;True
++0:11:11;sysmon;lights-2-failure;True
++0:11:37;sysmon;automaticsolver;True
++0:11:37;sysmon;scales-1-failure;down
++0:07:15;communications;radioprompt;own
++0:07:53;communications;radioprompt;own
++0:08:37;communications;radioprompt;own
++0:09:03;communications;radioprompt;own
 +0:09:43;communications;radioprompt;own
-+0:10:31;communications;radioprompt;own
-+0:11:33;communications;radioprompt;own
-+0:12:29;communications;radioprompt;own
-+0:13:33;communications;radioprompt;own
-+0:14:36;communications;radioprompt;own
-+0:06:19;communications;radioprompt;other
-+0:07:19;communications;radioprompt;other
-+0:08:11;communications;radioprompt;other
-+0:09:13;communications;radioprompt;other
-+0:11:01;communications;radioprompt;other
-+0:12:06;communications;radioprompt;other
-+0:13:06;communications;radioprompt;other
-+0:14:06;communications;radioprompt;other
-+0:06:59;resman;pump-1-state;failure
-+0:07:19;resman;pump-1-state;off
-+0:08:56;resman;pump-3-state;failure
-+0:09:16;resman;pump-3-state;off
-+0:10:53;resman;pump-2-state;failure
-+0:11:13;resman;pump-2-state;off
-+0:12:58;resman;pump-4-state;failure
-+0:13:18;resman;pump-4-state;off
-+0:15:31;sysmon;stop
-+0:15:31;track;stop
-+0:15:31;communications;stop
-+0:15:31;resman;stop
-+0:15:31;instructions;filename;korean/10_end.txt
-+0:15:31;instructions;start
++0:10:28;communications;radioprompt;own
++0:10:53;communications;radioprompt;own
++0:11:29;communications;radioprompt;own
++0:07:37;communications;radioprompt;other
++0:08:19;communications;radioprompt;other
++0:09:25;communications;radioprompt;other
++0:10:09;communications;radioprompt;other
++0:07:57;resman;pump-1-state;failure
++0:08:17;resman;pump-1-state;off
++0:09:37;resman;pump-3-state;failure
++0:09:57;resman;pump-3-state;off
++0:11:02;resman;pump-2-state;failure
++0:11:22;resman;pump-2-state;off
++0:12:07;sysmon;stop
++0:12:07;track;stop
++0:12:07;communications;stop
++0:12:07;resman;stop
++0:12:07;instructions;filename;korean/99_end.txt
++0:12:07;instructions;start
 diff --git a/includes/sounds/korean/tts/empty.wav b/includes/sounds/korean/tts/empty.wav
 new file mode 100644
 index 0000000000000000000000000000000000000000..8feaf82918e2cf9950accb0792a090748b5612b9
@@ -1014,22 +1203,31 @@ index 0000000..6bdfc04
 +msgid "Remaining time \t %s"
 +msgstr "남은 시간 \t %s"
 diff --git a/plugins/__init__.py b/plugins/__init__.py
-index 9709023..2eab59d 100644
+index 9709023..0c8a42d 100644
 --- a/plugins/__init__.py
 +++ b/plugins/__init__.py
-@@ -6,6 +6,7 @@ from .abstractplugin import AbstractPlugin  # noqa: F401
+@@ -6,6 +6,8 @@ from .abstractplugin import AbstractPlugin  # noqa: F401
  from .communications import Communications  # noqa: F401
  from .genericscales import Genericscales  # noqa: F401
  from .generictrigger import Generictrigger  # noqa: F401
++from .gate import Gate  # noqa: F401
 +from .guide import Guide  # noqa: F401
  from .instructions import Instructions  # noqa: F401
  from .labstreaminglayer import Labstreaminglayer  # noqa: F401
  from .parallelport import Parallelport  # noqa: F401
 diff --git a/plugins/communications.py b/plugins/communications.py
-index 1affd2a..0749fbd 100644
+index 1affd2a..566dce5 100644
 --- a/plugins/communications.py
 +++ b/plugins/communications.py
-@@ -17,6 +17,7 @@ from core.constants import PATHS as P
+@@ -10,13 +10,14 @@ from typing import Any, Callable
+ 
+ from pyglet.window import mouse as winmouse
+ 
+-from core import validation
++from core import study_gate, validation
+ from core.audio import SequencePlayer, load_sound
+ from core.constants import COLORS as C
+ from core.constants import PATHS as P
  from core.constants import REPLAY_MODE
  from core.container import Container
  from core.error import get_errors
@@ -1066,12 +1264,73 @@ index 1affd2a..0749fbd 100644
              self.player.play()
          except Exception:
              self.logger.log_manual_entry("Audio prompt playback failed")
+@@ -548,6 +557,8 @@ class Communications(AbstractPlugin):
+         self.log_performance("response_time", rt)
+         self.log_performance("sdt_value", sdt)
+         self.log_performance("resolved_by", "agent" if emulate else "human")
++        if sdt == "HIT" and not emulate:
++            study_gate.comm_hits += 1  # Korean adaptation: ends a tutorial step (plugins/gate.py)
+ 
+         # Response is good if both radio and frequency are correct
+         if not response_needed:
+diff --git a/plugins/gate.py b/plugins/gate.py
+new file mode 100644
+index 0000000..0470e32
+--- /dev/null
++++ b/plugins/gate.py
+@@ -0,0 +1,46 @@
++# Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
++# Institut National Universitaire Champollion (Albi, France).
++# License : CeCILL, version 2.1 (see the LICENSE file)
++#
++# Korean adaptation (2026): end a tutorial step as soon as the participant succeeds.
++
++"""Gate: when started, waits for a correct communications response (HIT) by the participant, then makes the
++scenario jump to `skipto` (seconds). Without success, the scenario simply goes on until `skipto`.
++
++Example (tutorial of the communications task, up to 60 s):
++0:01:00;communications;radioprompt;own
++0:01:00;gate;skipto;120
++0:01:00;gate;start
++"""
++
++from __future__ import annotations
++
++from typing import Any, Callable
++
++from core import study_gate, validation
++from plugins.abstractplugin import AbstractPlugin
++
++
++class Gate(AbstractPlugin):
++    def __init__(self, label: str = "", taskplacement: str = "invisible", taskupdatetime: int = 50) -> None:
++        super().__init__(_("Gate"), taskplacement, taskupdatetime)
++        self.validation_dict: dict[str, Callable[..., Any]] = {"skipto": validation.is_natural_integer}
++        self.parameters.update(dict(skipto=0))
++        self._hits_at_start: int = 0
++
++    def start(self) -> None:
++        super().start()
++        self._hits_at_start = study_gate.comm_hits
++
++    def compute_next_plugin_state(self) -> bool:
++        if not super().compute_next_plugin_state():
++            return False
++        if self.scenario_time >= float(self.parameters["skipto"]):  # Not passed: the step ends anyway
++            self.stop()
++        elif study_gate.comm_hits > self._hits_at_start:
++            target: float = float(self.parameters["skipto"])
++            if target > self.scenario_time:
++                study_gate.skip_to = target
++                self.logger.log_manual_entry(f"Gate passed at {self.scenario_time:.2f}, skip to {target:.0f}")
++            self.stop()
++        return True
 diff --git a/plugins/guide.py b/plugins/guide.py
 new file mode 100644
-index 0000000..e967d6b
+index 0000000..3d80ffc
 --- /dev/null
 +++ b/plugins/guide.py
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,131 @@
 +# Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
 +# Institut National Universitaire Champollion (Albi, France).
 +# License : CeCILL, version 2.1 (see the LICENSE file)
@@ -1084,6 +1343,7 @@ index 0000000..e967d6b
 +- area: where the box goes, "right" (right 62 % of the screen), "top", "bottom" (half of the screen)
 +  or "center" (a centered box)
 +- highlight: a task location to frame (topleft, topmid, bottomleft, bottommid, topright, bottomright) or "none"
++- highlightbox: the part of that location to frame, "x,y,w,h" in fractions of it from its bottom left corner
 +"""
 +
 +from __future__ import annotations
@@ -1105,13 +1365,25 @@ index 0000000..e967d6b
 +class Guide(Instructions):
 +    def __init__(self) -> None:
 +        super().__init__()
-+        self.parameters.update(dict(area="right", highlight="none"))
++        self.parameters.update(dict(area="right", highlight="none", highlightbox="0,0,1,1"))
 +        self.keep_tasks_visible: bool = True  # Read by the scheduler
 +        self.validation_dict.update(
 +            {
 +                "area": (validation.is_in_list, AREAS),
 +                "highlight": (validation.is_in_list, HIGHLIGHTS),
++                "highlightbox": validation.is_string,
 +            }
++        )
++
++    @staticmethod
++    def sub_container(container: Container, box: str) -> Container:
++        """Part of a task area: box = "x,y,w,h", fractions of the area from its bottom left corner."""
++        try:
++            x, y, w, h = (float(v) for v in str(box).split(","))
++        except ValueError:
++            return container
++        return Container(
++            container.name, container.l + x * container.w, container.b + y * container.h, w * container.w, h * container.h
 +        )
 +
 +    def guide_container(self) -> Container:
@@ -1144,6 +1416,7 @@ index 0000000..e967d6b
 +        if self.parameters["highlight"] != "none":
 +            target: Container | None = Window.MainWindow.get_container(self.parameters["highlight"])
 +            if target is not None:
++                target = self.sub_container(target, self.parameters["highlightbox"])
 +                self.add_widget(
 +                    "highlight",
 +                    Frame,
@@ -1223,8 +1496,116 @@ index 821bb2d..19e874f 100644
                  color=self.parameters["pumpcoloroff"],
                  pump_width=pump_width,
                  y_offset=y_offset,
+diff --git a/plugins/track.py b/plugins/track.py
+index 57dd337..4508f8c 100644
+--- a/plugins/track.py
++++ b/plugins/track.py
+@@ -13,6 +13,7 @@ from pyglet.window import mouse as winmouse
+ from core import validation
+ from core.constants import COLORS as C
+ from core.constants import REPLAY_MODE
++from core.platform import IS_WEB
+ from core.container import Container
+ from core.utils import clamp
+ from core.widgets import Reticle
+@@ -37,6 +38,8 @@ class Track(AbstractPlugin):
+             "targetproportion": validation.is_in_unit_interval,
+             "joystickforce": validation.is_natural_integer,
+             "inverseaxis": validation.is_boolean,
++            "mousemove": validation.is_boolean,
++            "mousegain": validation.is_positive_float,
+         }
+ 
+         new_par: dict[str, Any] = dict(
+@@ -47,6 +50,8 @@ class Track(AbstractPlugin):
+             targetproportion=0.25,
+             joystickforce=1,
+             inverseaxis=False,
++            mousemove=False,  # Korean adaptation: the cursor follows the mouse movements (browser, pointer lock)
++            mousegain=0.5,  # Cursor pixels per mouse pixel
+         )
+         self.parameters.update(new_par)
+ 
+@@ -61,6 +66,9 @@ class Track(AbstractPlugin):
+         self._mouse_dragging: bool = False
+         self._drag_origin_x: int = 0
+         self._drag_origin_y: int = 0
++        self._pointer_lost: int = 0
++        self._tracking_js: Any = None
++        self._mouse_wanted: bool = False
+ 
+     def get_response_timers(self) -> list[float]:
+         return [self._response_elapsed_ms(self._response_start)]
+@@ -114,10 +122,14 @@ class Track(AbstractPlugin):
+         if not super().compute_next_plugin_state():
+             return
+ 
++        mouse_moved: bool = self.parameters["mousemove"] and self._take_mouse_movement()
++
+         # In case of replay, do not compute cursor position.
+         # : the ReplayScheduler will master it.
+         if not REPLAY_MODE:
+             self.cursor_position = next(self.cursor_path_gen)
++        if mouse_moved:  # A movement is applied once (x_input/y_input act like a joystick otherwise)
++            self.x_input = self.y_input = 0
+ 
+         # NaN when no target is defined: logged as such, but treated as in target
+         # (normal cursor color, no response needed)
+@@ -135,6 +147,52 @@ class Track(AbstractPlugin):
+                 self.log_performance("response_time", self._response_elapsed_ms(self._response_start))
+                 self._response_start = None
+ 
++    # Korean adaptation: tracking by moving the mouse (web/mouse_tracking.js). Few calls to JavaScript per step.
++    def _mouse_tracking(self) -> Any:
++        if not IS_WEB:
++            return None
++        if self._tracking_js is None:
++            import js  # type: ignore[import-not-found]
++
++            self._tracking_js = getattr(js.window, "MouseTracking", None)
++        return self._tracking_js
++
++    def _set_mouse_wanted(self, wanted: bool) -> None:
++        tracking: Any = self._mouse_tracking()
++        if tracking is not None and wanted != self._mouse_wanted:
++            self._mouse_wanted = wanted
++            tracking.setWanted(wanted)
++
++    def _take_mouse_movement(self) -> bool:
++        tracking: Any = self._mouse_tracking()
++        if tracking is None:
++            return False
++        self._set_mouse_wanted(True)
++        moved: str = str(tracking.take())
++        if moved == "0,0":
++            return False
++        if moved == "lost":  # The pointer lock has just been lost (Esc, focus change)
++            self._pointer_lost += 1
++            self.logger.log_manual_entry(str(self._pointer_lost), key="pointerlock_lost")
++            return False
++        dx, dy = (float(v) for v in moved.split(","))
++        # Browser movements: y goes down. The generator moves the cursor by (x_input, -y_input)
++        self.x_input = dx * self.parameters["mousegain"]
++        self.y_input = dy * self.parameters["mousegain"]
++        return True
++
++    def _release_mouse_tracking(self) -> None:
++        if self.parameters["mousemove"]:
++            self._set_mouse_wanted(False)
++
++    def pause(self) -> None:
++        super().pause()
++        self._release_mouse_tracking()
++
++    def stop(self) -> None:
++        super().stop()
++        self._release_mouse_tracking()
++
+     def refresh_widgets(self) -> None:
+         if not super().refresh_widgets():
+             return
 diff --git a/web/build.py b/web/build.py
-index d3baf8c..9502492 100644
+index d3baf8c..1294a77 100644
 --- a/web/build.py
 +++ b/web/build.py
 @@ -39,6 +39,7 @@ from xml.sax.saxutils import escape, quoteattr
@@ -1235,15 +1616,16 @@ index d3baf8c..9502492 100644
  
  # Keep in sync with requirements.txt
  WHEELS: list[str] = ["pyglet==3.0.dev10", "rstr==3.1.0"]
-@@ -46,6 +47,7 @@ WHEELS: list[str] = ["pyglet==3.0.dev10", "rstr==3.1.0"]
+@@ -46,6 +47,8 @@ WHEELS: list[str] = ["pyglet==3.0.dev10", "rstr==3.1.0"]
  # JavaScript modules of the page (web/*.js), copied as is
  PAGE_MODULES: tuple[str, ...] = (
      "openmatb.js",
 +    "korean_tts.js",
++    "mouse_tracking.js",
      "session_output.js",
      "scorm.js",
      "cmi5.js",
-@@ -95,6 +97,61 @@ CMI5_NAMESPACE: str = "https://w3id.org/xapi/profiles/cmi5/v1/CourseStructure.xs
+@@ -95,6 +98,61 @@ CMI5_NAMESPACE: str = "https://w3id.org/xapi/profiles/cmi5/v1/CourseStructure.xs
  FONT_URL: str = "https://cdn.jsdelivr.net/npm/@fontsource/noto-sans@5.3.0/files/noto-sans-latin-{weight}-normal.woff2"
  FONT_WEIGHTS: tuple[int, ...] = (400, 700)
  
@@ -1305,7 +1687,7 @@ index d3baf8c..9502492 100644
  # Application files packed into app.zip, then extracted into the Pyodide file system
  APP_FILES: list[str] = ["main.py", "config.ini", "VERSION"]
  APP_DIRS: dict[str, tuple[str, ...]] = {
-@@ -197,6 +254,7 @@ def build(pyodide: str = "cdn") -> None:
+@@ -197,6 +255,7 @@ def build(pyodide: str = "cdn") -> None:
      wheels: list[str] = download_wheels()
      copy_pyglet_bridge()
      download_fonts()
@@ -1447,19 +1829,117 @@ index 0000000..e21cdab
 +    },
 +};
 +window.KoreanTTS = KoreanTTS;
+diff --git a/web/mouse_tracking.js b/web/mouse_tracking.js
+new file mode 100644
+index 0000000..f512ce7
+--- /dev/null
++++ b/web/mouse_tracking.js
+@@ -0,0 +1,91 @@
++// Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
++// Institut National Universitaire Champollion (Albi, France).
++// License : CeCILL, version 2.1 (see the LICENSE file)
++//
++// Korean adaptation (2026): tracking by moving the mouse, the mouse pointer being hidden (pointer lock). The green
++// cursor of the tracking task is the participant's cursor: plugins/track.py (parameter mousemove) takes the mouse
++// movements accumulated here at each step. While the tracking task runs without the pointer lock (start, Esc), a
++// message asks for a click, which locks the pointer again; the losses are counted (logged by the plugin).
++
++const state = { dx: 0, dy: 0, wanted: false, locked: false, lostUnread: false };
++let overlay = null;
++
++function canvas() {
++    return document.getElementById("pygletCanvas");
++}
++
++function makeOverlay() {
++    overlay = document.createElement("div");
++    overlay.id = "pointer-lock-overlay";
++    overlay.textContent = "화면을 클릭하면 추적을 시작합니다 (마우스 커서는 숨겨집니다)";
++    Object.assign(overlay.style, {
++        position: "fixed", left: "50%", top: "28%", transform: "translate(-50%, -50%)", zIndex: "1000",
++        padding: "18px 28px", borderRadius: "10px", background: "rgba(230, 120, 0, 0.95)", color: "#fff",
++        font: "600 20px 'Noto Sans KR', sans-serif", cursor: "pointer", display: "none", textAlign: "center",
++    });
++    // Keep the keyboard focus on the task canvas (the keys of the tasks go there)
++    overlay.addEventListener("mousedown", (event) => event.preventDefault());
++    overlay.addEventListener("click", lock);
++    document.body.append(overlay);
++}
++
++function refresh() {
++    if (!overlay) {
++        makeOverlay();
++    }
++    overlay.style.display = state.wanted && !state.locked ? "block" : "none";
++}
++
++function lock() {
++    const target = canvas();
++    target?.focus();
++    if (target && !document.pointerLockElement) {
++        const request = target.requestPointerLock();
++        // Chrome refuses a new lock right after an Esc: the message stays and the next click retries
++        request?.catch?.(() => {});
++    }
++}
++
++document.addEventListener("mousemove", (event) => {
++    if (document.pointerLockElement) {
++        state.dx += event.movementX;
++        state.dy += event.movementY;
++    }
++});
++
++document.addEventListener("pointerlockchange", () => {
++    const wasLocked = state.locked;
++    state.locked = Boolean(document.pointerLockElement);
++    if (wasLocked && !state.locked && state.wanted) {
++        state.lostUnread = true;
++    }
++    state.dx = state.dy = 0;
++    refresh();
++});
++
++export const MouseTracking = {
++    // "dx,dy" (pixels, y downward) moved since the previous call, or "lost" once after a loss of the pointer lock
++    take() {
++        if (state.lostUnread) {
++            state.lostUnread = false;
++            return "lost";
++        }
++        const moved = `${state.dx},${state.dy}`;
++        state.dx = state.dy = 0;
++        return moved;
++    },
++    setWanted(wanted) {
++        if (state.wanted !== Boolean(wanted)) {
++            state.wanted = Boolean(wanted);
++            refresh();
++        }
++    },
++    release() {
++        state.wanted = false;
++        if (document.pointerLockElement) {
++            document.exitPointerLock();
++        }
++        refresh();
++    },
++};
++window.MouseTracking = MouseTracking;
 diff --git a/web/openmatb.js b/web/openmatb.js
-index e26ec0b..a6a29fa 100644
+index e26ec0b..559c1b8 100644
 --- a/web/openmatb.js
 +++ b/web/openmatb.js
-@@ -15,6 +15,7 @@ import { connectScorm } from "./scorm.js";
+@@ -15,6 +15,8 @@ import { connectScorm } from "./scorm.js";
  import { Cmi5Session, cmi5LaunchParameters, preferredLanguage } from "./cmi5.js";
  import { SerialTrigger, describePort } from "./serial_trigger.js";
  import { LslBridge } from "./lsl_bridge.js";
 +import { KoreanTTS } from "./korean_tts.js";
++import { MouseTracking } from "./mouse_tracking.js";
  
  // Set by web/build.py: pyodide.mjs on the Pyodide CDN, or its copy shipped with the page (--pyodide local)
  const PYODIDE_MODULE = new URL(document.querySelector('meta[name="pyodide-module"]').content, location.href).href;
-@@ -159,6 +160,36 @@ const TEXTS = {
+@@ -159,6 +161,36 @@ const TEXTS = {
      },
  };
  
@@ -1496,7 +1976,7 @@ index e26ec0b..a6a29fa 100644
  // ?lang= in the URL, otherwise the first browser language OpenMATB is translated in, otherwise English
  function detectLanguage() {
      const requested = new URLSearchParams(location.search).get("lang");
-@@ -359,6 +390,83 @@ checkBrowser();
+@@ -359,6 +391,83 @@ checkBrowser();
  // ?demo=1 (Demo tab of the website): runs the demo scenario, and nothing is recorded
  const DEMO = new URLSearchParams(location.search).get("demo") === "1";
  const DEMO_SCENARIO = "demo.txt";
@@ -1506,7 +1986,7 @@ index e26ec0b..a6a29fa 100644
 +const QUERY = new URLSearchParams(location.search);
 +const STUDY = !DEMO && QUERY.get("admin") !== "1" && !QUERY.get("cmi5") && !QUERY.get("endpoint");
 +const STUDY_SCENARIO = "korean/study.txt";
-+const SAMPLE_PROMPT = "에이 비 씨 하나 둘 삼, 에이 비 씨 하나 둘 삼. 무전기 컴 원, 주파수 하나 둘 여섯 점 오.";
++const SAMPLE_PROMPT = "에이, 비, 씨, 하나, 둘, 삼, 에이, 비, 씨, 하나, 둘, 삼, 무전기, 컴, 원, 주파수, 하나, 둘, 여섯, 쩜, 오.";
 +let soundChecked = false;
 +
 +function setupStudyPage() {
@@ -1580,7 +2060,7 @@ index e26ec0b..a6a29fa 100644
  // config.ini values of the demo: no session number to acknowledge, and the session is not sent anywhere
  const DEMO_CONFIG = { display_session_number: "False", web_session_output: "none" };
  
-@@ -427,10 +535,23 @@ async function returnToCourse() {
+@@ -427,10 +536,23 @@ async function returnToCourse() {
  }
  
  async function loadFonts() {
@@ -1608,7 +2088,7 @@ index e26ec0b..a6a29fa 100644
      }
  }
  
-@@ -639,6 +760,9 @@ $("start").addEventListener("click", async () => {
+@@ -639,6 +761,9 @@ $("start").addEventListener("click", async () => {
      if (DEMO && !params.has("scenario")) {
          params.set("scenario", DEMO_SCENARIO);
      }
@@ -1618,7 +2098,15 @@ index e26ec0b..a6a29fa 100644
      history.replaceState(null, "", `?${params}`);
  
      const file = $("mode").value === "replay" ? $("session-file").files[0] : undefined;
-@@ -751,6 +875,9 @@ document.addEventListener("openmatb-end", async (event) => {
+@@ -729,6 +854,7 @@ function destinationItem(text, ok) {
+ 
+ // Dispatched by core.logger.Logger.end_session(), with the path of the session file: download it and/or send it
+ document.addEventListener("openmatb-end", async (event) => {
++    MouseTracking.release();
+     if (document.fullscreenElement) {
+         document.exitFullscreen();
+     }
+@@ -751,6 +877,9 @@ document.addEventListener("openmatb-end", async (event) => {
          document.querySelector('#end [data-i18n="kept_in_browser"]').hidden = true;
          return;
      }
