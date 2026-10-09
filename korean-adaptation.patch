@@ -1820,10 +1820,10 @@ index d3baf8c..1294a77 100644
          shutil.copy(WEB / module, DIST / module)
      version: str = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 diff --git a/web/index.html b/web/index.html
-index ae1a68d..5698665 100644
+index ae1a68d..1d55722 100644
 --- a/web/index.html
 +++ b/web/index.html
-@@ -70,6 +70,17 @@
+@@ -70,6 +70,20 @@
              font-size: 1rem; line-height: 1; }
          #pygletStatus { position: fixed; left: 16px; bottom: 12px; margin: 0; color: var(--muted);
              font-size: 0.85rem; white-space: pre-wrap; pointer-events: none; }
@@ -1836,12 +1836,15 @@ index ae1a68d..5698665 100644
 +        .lead { line-height: 1.6; }
 +        .study-list { padding-left: 20px; line-height: 1.6; }
 +        .study-buttons { display: flex; gap: 8px; align-items: center; }
++        .pre-q { margin: 10px 0; } .pre-q p { margin: 0 0 4px; }
++        .pre-q .scale { display: flex; gap: 6px; flex-wrap: wrap; font-size: 0.9rem; }
++        .pre-q .scale label { display: flex; gap: 4px; align-items: center; font-weight: 400; }
 +        .study-buttons button { margin-top: 8px; width: auto; flex: 1; }
 +        #result-code { width: 100%; box-sizing: border-box; font: 12px ui-monospace, monospace; word-break: break-all; }
      </style>
  </head>
  <body>
-@@ -78,10 +89,29 @@
+@@ -78,10 +92,34 @@
              <h1>OpenMATB <span class="version">v{{VERSION}}</span></h1>
              <p class="subtitle">Julien.Cegarra@univ-jfc.fr</p>
  
@@ -1850,9 +1853,14 @@ index ae1a68d..5698665 100644
 +                <ul class="study-list">
 +                    <li><strong>PC</strong>(노트북 포함), <strong>마우스</strong>, 키보드, <strong>스피커나 이어폰</strong>이 필요합니다.</li>
 +                    <li><strong>Chrome</strong> 또는 <strong>Edge</strong> 브라우저를 써 주세요.</li>
-+                    <li>이 페이지는 이름이나 연락처를 묻지 않습니다. 끝에 나오는 <strong>결과 코드</strong>를 설문지에 붙여 넣는 방식으로 제출됩니다.</li>
++                    <li>이 페이지는 이름이나 연락처를 묻지 않습니다. 끝에 나오는 <strong>결과 코드</strong>가 설문지에 자동으로 들어가 함께 제출됩니다.</li>
++                    <li><strong>만 19세 이상</strong>만 참여할 수 있습니다. 한 사람이 <strong>한 번만</strong> 참여해 주세요.</li>
 +                    <li>언제든 창을 닫아 참여를 그만둘 수 있습니다.</li>
 +                </ul>
++                <p id="mobile-warning" class="lead" hidden><strong>휴대폰이나 태블릿에서는 참여할 수 없습니다.</strong> PC에서 이 주소를 열어 주세요.</p>
++                <h2>시작 전 질문</h2>
++                <p class="hint">기계나 자동 장치 일반에 대해 평소 어떻게 생각하는지 고르세요. 1 전혀 아니다 ~ 5 매우 그렇다</p>
++                <div id="pre-questions"></div>
 +                <h2>소리 확인</h2>
 +                <p class="hint">스피커나 이어폰을 켜고 아래 버튼을 누르세요. "에이 비 씨 하나 둘 삼…" 하는 한국어 음성이 들리면 정상입니다.</p>
 +                <div class="study-buttons">
@@ -1871,7 +1879,7 @@ index ae1a68d..5698665 100644
              </select>
  
              <label for="mode" data-i18n="mode">Mode</label>
-@@ -123,6 +153,13 @@
+@@ -123,6 +161,13 @@
              <h1 data-i18n="session_ended">Session ended</h1>
              <p class="subtitle"><span data-i18n="log_file">The log file</span> <strong id="end-file"></strong></p>
              <ul id="end-destinations" class="destinations" aria-live="polite"></ul>
@@ -2083,7 +2091,7 @@ index 0000000..27fa5ec
 +};
 +window.MouseTracking = MouseTracking;
 diff --git a/web/openmatb.js b/web/openmatb.js
-index e26ec0b..335e7b7 100644
+index e26ec0b..e0fbe3b 100644
 --- a/web/openmatb.js
 +++ b/web/openmatb.js
 @@ -15,6 +15,8 @@ import { connectScorm } from "./scorm.js";
@@ -2132,7 +2140,7 @@ index e26ec0b..335e7b7 100644
  // ?lang= in the URL, otherwise the first browser language OpenMATB is translated in, otherwise English
  function detectLanguage() {
      const requested = new URLSearchParams(location.search).get("lang");
-@@ -359,6 +391,89 @@ checkBrowser();
+@@ -359,6 +391,144 @@ checkBrowser();
  // ?demo=1 (Demo tab of the website): runs the demo scenario, and nothing is recorded
  const DEMO = new URLSearchParams(location.search).get("demo") === "1";
  const DEMO_SCENARIO = "demo.txt";
@@ -2144,6 +2152,53 @@ index e26ec0b..335e7b7 100644
 +const STUDY_SCENARIO = "korean/study.txt";
 +const SAMPLE_PROMPT = "에이, 비, 씨, 하나, 둘, 삼, 에이, 비, 씨, 하나, 둘, 삼, 무전기, 컴, 원, 주파수, 하나, 둘, 여섯, 쩜, 오.";
 +let soundChecked = false;
++
++// Questions answered before the test (they go into the result code): propensity to trust automation, 6 items
++// (Merritt et al., 2013; researcher's translation, t2 reverse-keyed), and whether the person did the test before.
++// Asked before the test so that seeing the automation fail during task 2 cannot change the answers.
++const PRE_QUESTIONS = [
++    ["t1", "나는 이유가 생기기 전까지는 대체로 기계를 믿는다."],
++    ["t2", "대체로 나는 기계를 믿지 않는다."],
++    ["t3", "일반적으로 나는 기계의 도움에 기댈 것이다."],
++    ["t4", "기계를 믿는 내 성향은 강한 편이다."],
++    ["t5", "기계가 제 할 일을 하리라고 믿는 것은 내게 쉬운 일이다."],
++    ["t6", "잘 모르는 기계라도 나는 믿는 편이다."],
++];
++const preAnswers = {};
++
++function buildPreQuestions(onChange) {
++    const box = $("pre-questions");
++    const add = (key, text, options) => {
++        const item = document.createElement("div");
++        item.className = "pre-q";
++        const p = document.createElement("p");
++        p.textContent = text;
++        const scale = document.createElement("div");
++        scale.className = "scale";
++        for (const [value, label] of options) {
++            const l = document.createElement("label");
++            const input = document.createElement("input");
++            input.type = "radio";
++            input.name = `pre-${key}`;
++            input.value = value;
++            input.addEventListener("change", () => {
++                preAnswers[key] = Number(value);
++                onChange();
++            });
++            l.append(input, label);
++            scale.append(l);
++        }
++        item.append(p, scale);
++        box.append(item);
++    };
++    const likert = [1, 2, 3, 4, 5].map((v) => [v, String(v)]);
++    PRE_QUESTIONS.forEach(([key, text], i) => add(key, `${i + 1}. ${text}`, likert));
++    add("before", `${PRE_QUESTIONS.length + 1}. 이 테스트를 전에 해 본 적이 있나요?`, [[0, "아니요"], [1, "예"]]);
++}
++
++function preQuestionsDone() {
++    return PRE_QUESTIONS.every(([key]) => key in preAnswers) && "before" in preAnswers;
++}
 +
 +function setupStudyPage() {
 +    document.body.classList.add("study");
@@ -2159,9 +2214,13 @@ index e26ec0b..335e7b7 100644
 +        KoreanTTS.speak(SAMPLE_PROMPT);
 +        $("sound-ok").disabled = false;
 +    });
++    const mobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
++        (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent)); // iPadOS reports a Mac
++    $("mobile-warning").hidden = !mobile;
 +    const showStart = () => {
-+        $("start").hidden = !(soundChecked && $("agree").checked);
++        $("start").hidden = mobile || !(soundChecked && $("agree").checked && preQuestionsDone());
 +    };
++    buildPreQuestions(showStart);
 +    $("sound-ok").addEventListener("click", () => {
 +        soundChecked = true;
 +        $("sound-ok").textContent = "확인했습니다";
@@ -2182,10 +2241,14 @@ index e26ec0b..335e7b7 100644
 +    let code;
 +    try {
 +        pyodide.globals.set("_session_path", sessionPath);
++        pyodide.globals.set("_pre_answers", JSON.stringify(preAnswers));
 +        code = pyodide.runPython(`
++import json
 +from pathlib import Path
 +from core.korean_score import result_code, score_file
-+result_code(score_file(_session_path, Path("${APP_DIR}/includes/scenarios/korean/study.txt")))`);
++_result = score_file(_session_path, Path("${APP_DIR}/includes/scenarios/korean/study.txt"))
++_result.update({f"pre_{k}": v for k, v in json.loads(_pre_answers).items()})
++result_code(_result)`);
 +    } catch (error) {
 +        console.error(error);
 +        code = "OM1-ERROR " + String(error.message || error).slice(-200);
@@ -2222,7 +2285,7 @@ index e26ec0b..335e7b7 100644
  // config.ini values of the demo: no session number to acknowledge, and the session is not sent anywhere
  const DEMO_CONFIG = { display_session_number: "False", web_session_output: "none" };
  
-@@ -427,10 +542,23 @@ async function returnToCourse() {
+@@ -427,10 +597,23 @@ async function returnToCourse() {
  }
  
  async function loadFonts() {
@@ -2250,7 +2313,7 @@ index e26ec0b..335e7b7 100644
      }
  }
  
-@@ -631,6 +759,11 @@ $("mode").addEventListener("change", () => {
+@@ -631,6 +814,11 @@ $("mode").addEventListener("change", () => {
  $("start").addEventListener("click", async () => {
      // Everything that needs the user gesture must happen before the first await
      const wantsFullscreen = $("fullscreen").checked;
@@ -2262,7 +2325,7 @@ index e26ec0b..335e7b7 100644
      const fullscreen = wantsFullscreen ? document.documentElement.requestFullscreen().catch(() => {}) : null;
  
      const params = new URLSearchParams(location.search);
-@@ -639,6 +772,9 @@ $("start").addEventListener("click", async () => {
+@@ -639,6 +827,9 @@ $("start").addEventListener("click", async () => {
      if (DEMO && !params.has("scenario")) {
          params.set("scenario", DEMO_SCENARIO);
      }
@@ -2272,7 +2335,7 @@ index e26ec0b..335e7b7 100644
      history.replaceState(null, "", `?${params}`);
  
      const file = $("mode").value === "replay" ? $("session-file").files[0] : undefined;
-@@ -688,6 +824,10 @@ $("start").addEventListener("click", async () => {
+@@ -688,6 +879,10 @@ $("start").addEventListener("click", async () => {
      }
      status(null);
      try {
@@ -2283,7 +2346,7 @@ index e26ec0b..335e7b7 100644
          await pyodide.runPythonAsync(`import runpy; runpy.run_path("main.py", run_name="__main__")`);
          $("pygletCanvas").focus();
      } catch (error) {
-@@ -729,6 +869,7 @@ function destinationItem(text, ok) {
+@@ -729,6 +924,7 @@ function destinationItem(text, ok) {
  
  // Dispatched by core.logger.Logger.end_session(), with the path of the session file: download it and/or send it
  document.addEventListener("openmatb-end", async (event) => {
@@ -2291,7 +2354,7 @@ index e26ec0b..335e7b7 100644
      if (document.fullscreenElement) {
          document.exitFullscreen();
      }
-@@ -751,6 +892,9 @@ document.addEventListener("openmatb-end", async (event) => {
+@@ -751,6 +947,9 @@ document.addEventListener("openmatb-end", async (event) => {
          document.querySelector('#end [data-i18n="kept_in_browser"]').hidden = true;
          return;
      }

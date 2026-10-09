@@ -79,6 +79,9 @@
         .lead { line-height: 1.6; }
         .study-list { padding-left: 20px; line-height: 1.6; }
         .study-buttons { display: flex; gap: 8px; align-items: center; }
+        .pre-q { margin: 10px 0; } .pre-q p { margin: 0 0 4px; }
+        .pre-q .scale { display: flex; gap: 6px; flex-wrap: wrap; font-size: 0.9rem; }
+        .pre-q .scale label { display: flex; gap: 4px; align-items: center; font-weight: 400; }
         .study-buttons button { margin-top: 8px; width: auto; flex: 1; }
         #result-code { width: 100%; box-sizing: border-box; font: 12px ui-monospace, monospace; word-break: break-all; }
     </style>
@@ -94,9 +97,14 @@
                 <ul class="study-list">
                     <li><strong>PC</strong>(노트북 포함), <strong>마우스</strong>, 키보드, <strong>스피커나 이어폰</strong>이 필요합니다.</li>
                     <li><strong>Chrome</strong> 또는 <strong>Edge</strong> 브라우저를 써 주세요.</li>
-                    <li>이 페이지는 이름이나 연락처를 묻지 않습니다. 끝에 나오는 <strong>결과 코드</strong>를 설문지에 붙여 넣는 방식으로 제출됩니다.</li>
+                    <li>이 페이지는 이름이나 연락처를 묻지 않습니다. 끝에 나오는 <strong>결과 코드</strong>가 설문지에 자동으로 들어가 함께 제출됩니다.</li>
+                    <li><strong>만 19세 이상</strong>만 참여할 수 있습니다. 한 사람이 <strong>한 번만</strong> 참여해 주세요.</li>
                     <li>언제든 창을 닫아 참여를 그만둘 수 있습니다.</li>
                 </ul>
+                <p id="mobile-warning" class="lead" hidden><strong>휴대폰이나 태블릿에서는 참여할 수 없습니다.</strong> PC에서 이 주소를 열어 주세요.</p>
+                <h2>시작 전 질문</h2>
+                <p class="hint">기계나 자동 장치 일반에 대해 평소 어떻게 생각하는지 고르세요. 1 전혀 아니다 ~ 5 매우 그렇다</p>
+                <div id="pre-questions"></div>
                 <h2>소리 확인</h2>
                 <p class="hint">스피커나 이어폰을 켜고 아래 버튼을 누르세요. "에이 비 씨 하나 둘 삼…" 하는 한국어 음성이 들리면 정상입니다.</p>
                 <div class="study-buttons">

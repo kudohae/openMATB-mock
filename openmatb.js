@@ -400,6 +400,53 @@ const STUDY_SCENARIO = "korean/study.txt";
 const SAMPLE_PROMPT = "에이, 비, 씨, 하나, 둘, 삼, 에이, 비, 씨, 하나, 둘, 삼, 무전기, 컴, 원, 주파수, 하나, 둘, 여섯, 쩜, 오.";
 let soundChecked = false;
 
+// Questions answered before the test (they go into the result code): propensity to trust automation, 6 items
+// (Merritt et al., 2013; researcher's translation, t2 reverse-keyed), and whether the person did the test before.
+// Asked before the test so that seeing the automation fail during task 2 cannot change the answers.
+const PRE_QUESTIONS = [
+    ["t1", "나는 이유가 생기기 전까지는 대체로 기계를 믿는다."],
+    ["t2", "대체로 나는 기계를 믿지 않는다."],
+    ["t3", "일반적으로 나는 기계의 도움에 기댈 것이다."],
+    ["t4", "기계를 믿는 내 성향은 강한 편이다."],
+    ["t5", "기계가 제 할 일을 하리라고 믿는 것은 내게 쉬운 일이다."],
+    ["t6", "잘 모르는 기계라도 나는 믿는 편이다."],
+];
+const preAnswers = {};
+
+function buildPreQuestions(onChange) {
+    const box = $("pre-questions");
+    const add = (key, text, options) => {
+        const item = document.createElement("div");
+        item.className = "pre-q";
+        const p = document.createElement("p");
+        p.textContent = text;
+        const scale = document.createElement("div");
+        scale.className = "scale";
+        for (const [value, label] of options) {
+            const l = document.createElement("label");
+            const input = document.createElement("input");
+            input.type = "radio";
+            input.name = `pre-${key}`;
+            input.value = value;
+            input.addEventListener("change", () => {
+                preAnswers[key] = Number(value);
+                onChange();
+            });
+            l.append(input, label);
+            scale.append(l);
+        }
+        item.append(p, scale);
+        box.append(item);
+    };
+    const likert = [1, 2, 3, 4, 5].map((v) => [v, String(v)]);
+    PRE_QUESTIONS.forEach(([key, text], i) => add(key, `${i + 1}. ${text}`, likert));
+    add("before", `${PRE_QUESTIONS.length + 1}. 이 테스트를 전에 해 본 적이 있나요?`, [[0, "아니요"], [1, "예"]]);
+}
+
+function preQuestionsDone() {
+    return PRE_QUESTIONS.every(([key]) => key in preAnswers) && "before" in preAnswers;
+}
+
 function setupStudyPage() {
     document.body.classList.add("study");
     $("lang").value = "ko_KR";
@@ -414,9 +461,13 @@ function setupStudyPage() {
         KoreanTTS.speak(SAMPLE_PROMPT);
         $("sound-ok").disabled = false;
     });
+    const mobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+        (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent)); // iPadOS reports a Mac
+    $("mobile-warning").hidden = !mobile;
     const showStart = () => {
-        $("start").hidden = !(soundChecked && $("agree").checked);
+        $("start").hidden = mobile || !(soundChecked && $("agree").checked && preQuestionsDone());
     };
+    buildPreQuestions(showStart);
     $("sound-ok").addEventListener("click", () => {
         soundChecked = true;
         $("sound-ok").textContent = "확인했습니다";
@@ -437,10 +488,14 @@ async function showStudyResult(pyodide, sessionPath) {
     let code;
     try {
         pyodide.globals.set("_session_path", sessionPath);
+        pyodide.globals.set("_pre_answers", JSON.stringify(preAnswers));
         code = pyodide.runPython(`
+import json
 from pathlib import Path
 from core.korean_score import result_code, score_file
-result_code(score_file(_session_path, Path("${APP_DIR}/includes/scenarios/korean/study.txt")))`);
+_result = score_file(_session_path, Path("${APP_DIR}/includes/scenarios/korean/study.txt"))
+_result.update({f"pre_{k}": v for k, v in json.loads(_pre_answers).items()})
+result_code(_result)`);
     } catch (error) {
         console.error(error);
         code = "OM1-ERROR " + String(error.message || error).slice(-200);
