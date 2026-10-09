@@ -753,10 +753,12 @@ $("mode").addEventListener("change", () => {
 $("start").addEventListener("click", async () => {
     // Everything that needs the user gesture must happen before the first await
     const wantsFullscreen = $("fullscreen").checked;
-    const fullscreen = wantsFullscreen ? document.documentElement.requestFullscreen().catch(() => {}) : null;
     if (STUDY) {
-        MouseTracking.lockNow(); // Tracking by mouse movements: the pointer is hidden for the whole session
+        // Tracking by mouse movements: the pointer is hidden for the whole session. Before the full screen request,
+        // which may use up the click; mouse_tracking.js retries on the next key press if this lock fails
+        MouseTracking.lockNow();
     }
+    const fullscreen = wantsFullscreen ? document.documentElement.requestFullscreen().catch(() => {}) : null;
 
     const params = new URLSearchParams(location.search);
     params.set("lang", $("lang").value);

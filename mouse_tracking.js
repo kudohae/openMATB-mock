@@ -5,10 +5,11 @@
 // Korean adaptation (2026): tracking by moving the mouse, the mouse pointer being hidden (pointer lock). The green
 // cursor of the tracking task is the participant's cursor: plugins/track.py (parameter mousemove) takes the mouse
 // movements accumulated here at each step. The pointer is locked by the start button (lockNow) for the whole
-// session. If the lock is lost while the tracking task runs (Esc), a message asks for a click, which locks the
-// pointer again; the losses are counted (logged by the plugin).
+// session. Browsers may refuse or drop that first lock (entering full screen uses up the click), so any later key
+// (except Esc) or click locks it again. If the lock is lost while the tracking task runs (Esc), a message also asks
+// for a click; the losses are counted (logged by the plugin).
 
-const state = { dx: 0, dy: 0, wanted: false, locked: false, lostUnread: false };
+const state = { dx: 0, dy: 0, wanted: false, locked: false, lostUnread: false, session: false };
 let overlay = null;
 
 function canvas() {
@@ -18,7 +19,7 @@ function canvas() {
 function makeOverlay() {
     overlay = document.createElement("div");
     overlay.id = "pointer-lock-overlay";
-    overlay.textContent = "마우스 고정이 풀렸습니다. 여기를 클릭하면 다시 고정되고 추적이 이어집니다";
+    overlay.textContent = "마우스가 고정되지 않았습니다. 여기를 클릭하면 고정되고 추적이 이어집니다";
     Object.assign(overlay.style, {
         position: "fixed", left: "50%", top: "28%", transform: "translate(-50%, -50%)", zIndex: "1000",
         padding: "18px 28px", borderRadius: "10px", background: "rgba(230, 120, 0, 0.95)", color: "#fff",
@@ -38,6 +39,7 @@ function refresh() {
 }
 
 function lock() {
+    state.session = true;
     canvas()?.focus();
     // The page itself (not the canvas): it can be locked by the start button, before the canvas is shown
     if (!document.pointerLockElement) {
@@ -51,6 +53,32 @@ document.addEventListener("mousemove", (event) => {
     if (document.pointerLockElement) {
         state.dx += event.movementX;
         state.dy += event.movementY;
+    }
+});
+
+// A key press or a click is a user gesture: use it to (re)lock the pointer. Esc is left alone: it unlocks the
+// pointer and opens the exit dialog, which is answered with keys (Space continues and locks again).
+document.addEventListener(
+    "keydown",
+    (event) => {
+        if (state.session && !document.pointerLockElement && event.key !== "Escape") {
+            lock();
+        }
+    },
+    true,
+);
+document.addEventListener(
+    "mousedown",
+    () => {
+        if (state.session && !document.pointerLockElement) {
+            lock();
+        }
+    },
+    true,
+);
+document.addEventListener("fullscreenchange", () => {
+    if (state.session && !document.pointerLockElement) {
+        lock();
     }
 });
 
@@ -85,6 +113,7 @@ export const MouseTracking = {
     },
     release() {
         state.wanted = false;
+        state.session = false;
         if (document.pointerLockElement) {
             document.exitPointerLock();
         }
