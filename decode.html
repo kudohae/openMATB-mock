@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>결과 코드 변환기</title>
+<style>
+  body { margin: 0; background: #f4f5f7; color: #1d2330; font-family: "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif; }
+  main { max-width: 980px; margin: 32px auto; padding: 24px 28px; background: #fff; border: 1px solid #d5d9e0; border-radius: 12px; }
+  h1 { font-size: 20px; margin-top: 0; }
+  textarea { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; font-size: 12px; padding: 10px; border: 1px solid #d5d9e0; border-radius: 8px; }
+  button { font: inherit; padding: 8px 18px; border: 0; border-radius: 8px; background: #2457c5; color: #fff; cursor: pointer; margin-right: 8px; }
+  p, li { font-size: 14px; line-height: 1.6; }
+  .muted { color: #5d6675; font-size: 13px; }
+  #summary { margin: 12px 0; font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>결과 코드 → 표(CSV) 변환기</h1>
+  <p>구글 시트의 <b>결과 코드 열 전체</b>를 복사해 아래에 붙여 넣으세요(한 줄에 코드 하나). 변환 결과는 CSV로 내려받아 엑셀이나 JASP에서 바로 열 수 있습니다.</p>
+  <p class="muted">이 페이지도 데이터를 어디에도 보내지 않습니다. 모든 처리는 이 브라우저 안에서만 일어납니다.</p>
+  <textarea id="in" rows="10" placeholder="MT1-eyJk..."></textarea>
+  <p><button id="go">변환</button><button id="dl" disabled>CSV 내려받기</button></p>
+  <div id="summary"></div>
+  <textarea id="out" rows="12" readonly></textarea>
+  <h2 style="font-size:16px">열 설명</h2>
+  <ul>
+    <li><b>valid</b>: 1이면 코드가 손상·수정되지 않음, 0이면 제외 권장</li>
+    <li><b>A_trk</b>: 과제 A 추적 오차(낮을수록 정확). 화면 대비 % 단위 RMSE</li>
+    <li><b>B_trk</b>: 과제 B 중 추적 오차</li>
+    <li><b>B_smN / B_smHit / B_smMiss / B_smRT / B_smFA</b>: 자동화가 놓친 시스템 이상의 개수 / 처리 / 놓침 / 평균 반응시간(초) / 이상 없는데 누른 횟수</li>
+    <li><b>B_cmN / B_cmHit / B_cmMiss / B_cmWrong / B_cmRT / B_cmFA</b>: 내 호출부호 교신 수 / 정답 / 놓침 / 채널 틀림 / 평균 반응시간 / 남의 호출에 반응</li>
+    <li><b>B_rmBoth</b>: 두 탱크가 모두 범위 안에 있던 시간 비율(%)</li>
+    <li><b>B_attn</b>: 주의 확인 통과(1) / 실패(0). 0이면 제외 권장</li>
+    <li><b>away</b>: 과제 중 다른 탭으로 이동한 횟수. 1 이상이면 검토</li>
+    <li><b>fast</b>: 1이면 점검용 단축 모드로 응답한 것이므로 제외</li>
+  </ul>
+</main>
+<script>
+"use strict";
+function fnv1a(str) { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); } return (h >>> 0).toString(36); }
+const COLS = ["id","valid","start","end","scr_w","scr_h","fast","away","A_trk","A_moved",
+  "B_trk","B_moved","B_smN","B_smHit","B_smMiss","B_smRT","B_smFA","B_smAutoN",
+  "B_cmN","B_cmHit","B_cmMiss","B_cmWrong","B_cmRT","B_cmFA","B_rmBoth","B_rmA","B_rmB","B_rmPress","B_attn"];
+let csv = "";
+document.getElementById("go").onclick = () => {
+  const lines = document.getElementById("in").value.split(/\s+/).map(s => s.trim()).filter(Boolean);
+  const rows = [COLS.join(",")]; let ok = 0, bad = 0, seen = new Set(), dup = 0;
+  for (const line of lines) {
+    const m = line.match(/^MT(\d+)-(.+)$/);
+    if (!m) { bad++; continue; }
+    try {
+      const payload = JSON.parse(decodeURIComponent(escape(atob(m[2]))));
+      const d = payload.d, valid = fnv1a(JSON.stringify(d)) === payload.c ? 1 : 0;
+      if (seen.has(d.id)) dup++; seen.add(d.id);
+      const A = d.A || {}, B = d.B || {};
+      const vals = [d.id, valid, d.start, d.end, (d.scr||[])[0], (d.scr||[])[1], d.fast, d.away, A.trk, A.moved,
+        B.trk, B.moved, B.smN, B.smHit, B.smMiss, B.smRT, B.smFA, B.smAutoN,
+        B.cmN, B.cmHit, B.cmMiss, B.cmWrong, B.cmRT, B.cmFA, B.rmBoth, B.rmA, B.rmB, B.rmPress, B.attn];
+      rows.push(vals.map(v => v == null ? "" : v).join(","));
+      valid ? ok++ : bad++;
+    } catch { bad++; }
+  }
+  csv = rows.join("\n");
+  document.getElementById("out").value = csv;
+  document.getElementById("summary").textContent = `정상 ${ok}건 · 손상/수정 의심 ${bad}건 · 중복 참가번호 ${dup}건`;
+  document.getElementById("dl").disabled = rows.length < 2;
+};
+document.getElementById("dl").onclick = () => {
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "matb_results.csv"; a.click();
+};
+</script>
+</body>
+</html>
