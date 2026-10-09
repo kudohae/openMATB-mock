@@ -26,3 +26,4 @@
 ## 라이선스
 
 OpenMATB와 같은 CeCILL 2.1(`LICENSE`)을 따릅니다. Copyright 2023-2026 Julien Cegarra & Benoît Valéry, Institut National Universitaire Champollion. 한국어 수정분도 같은 라이선스로 공개합니다.
+- 끝 화면: 설문 링크가 구글 폼을 열면서 결과 코드 칸을 자동으로 채웁니다(config.ini `web_survey_url`의 `{code}`).

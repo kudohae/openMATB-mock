@@ -456,14 +456,20 @@ result_code(score_file(_session_path, Path("${APP_DIR}/includes/scenarios/korean
         $("copied").textContent = "복사했습니다";
     };
     const survey = QUERY.get("form") || readConfigValue(readAppConfig(pyodide), "web_survey_url") || "";
+    const prefilled = survey.includes("{code}");
     $("survey-line").innerHTML = "";
     if (/^https:\/\//.test(survey)) {
         const link = document.createElement("a");
-        link.href = survey;
+        link.href = survey.replace("{code}", encodeURIComponent(code));
         link.target = "_blank";
         link.rel = "noopener";
-        link.textContent = "설문지 열기 (새 창)";
+        link.textContent = prefilled ? "설문지 열기 (새 창, 결과 코드가 자동으로 들어갑니다)" : "설문지 열기 (새 창)";
         $("survey-line").append(link);
+        if (prefilled) {
+            $("study-lead").textContent =
+                "아래 링크로 설문지를 열면 결과 코드가 자동으로 채워져 있습니다. 나머지 문항에 답하고 제출해야 참여가 완료됩니다. " +
+                "코드 칸이 비어 있으면 아래 코드를 복사해 붙여 넣어 주세요.";
+        }
     } else {
         $("survey-line").textContent = "안내받은 설문지 링크로 이동해 주세요.";
     }

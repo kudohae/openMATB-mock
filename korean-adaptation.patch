@@ -1,5 +1,5 @@
 diff --git a/config.ini b/config.ini
-index 9c25899..064c35b 100644
+index 9c25899..cbd7bbf 100644
 --- a/config.ini
 +++ b/config.ini
 @@ -23,7 +23,7 @@ fullscreen=True
@@ -11,7 +11,7 @@ index 9c25899..064c35b 100644
  
  # Web version: check the browser on the start page (Firefox pauses for 0.1 to 1 s every few seconds)
  # warn = display a notice | block = prevent starting (use Chrome or Edge) | off = no check
-@@ -34,12 +34,17 @@ web_browser_check=warn
+@@ -34,12 +34,18 @@ web_browser_check=warn
  # Comma separated list of: download (on the participant's computer), jatos, datapipe, webdav
  # e.g. web_session_output=webdav, download   to send the file to the server and also download it
  # See "Web version" in README.md to set up JATOS, DataPipe or a WebDAV folder
@@ -23,9 +23,10 @@ index 9c25899..064c35b 100644
  web_webdav_url=
  
 +# Korean adaptation (2026): address of the survey linked from the end page of the study (also ?form= in the URL).
++# {code} in the address is replaced by the result code (Google Forms pre-filled link), so it needs no pasting.
 +# The session files stay in the participant's browser (web_session_output=none): the study uses the result code.
 +# To also collect the raw files, set web_session_output=datapipe and web_datapipe_experiment.
-+web_survey_url=
++web_survey_url=https://docs.google.com/forms/d/e/1FAIpQLSeHJadxow6QJEfFohzVg2eAZvxSjQc6Xk4_qGrP_Wxw7GW0Qw/viewform?usp=pp_url&entry.1248882849={code}
 +
  # Web version: psychophysiology (see "Psychophysiology in the browser" in README.md)
  # parallelport plugin: write its values to a USB trigger box, whose serial port is chosen on the start page
@@ -1793,7 +1794,7 @@ index d3baf8c..1294a77 100644
          shutil.copy(WEB / module, DIST / module)
      version: str = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 diff --git a/web/index.html b/web/index.html
-index ae1a68d..209966a 100644
+index ae1a68d..f47db68 100644
 --- a/web/index.html
 +++ b/web/index.html
 @@ -70,6 +70,17 @@
@@ -1849,7 +1850,7 @@ index ae1a68d..209966a 100644
              <p class="subtitle"><span data-i18n="log_file">The log file</span> <strong id="end-file"></strong></p>
              <ul id="end-destinations" class="destinations" aria-live="polite"></ul>
 +            <section id="study-end" hidden>
-+                <p class="lead">아래 <strong>결과 코드 전체</strong>를 복사해 설문지의 "결과 코드" 칸에 붙여 넣어 주세요. 코드를 제출해야 참여가 완료됩니다.</p>
++                <p id="study-lead" class="lead">아래 <strong>결과 코드 전체</strong>를 복사해 설문지의 "결과 코드" 칸에 붙여 넣어 주세요. 코드를 제출해야 참여가 완료됩니다.</p>
 +                <textarea id="result-code" rows="5" readonly></textarea>
 +                <div class="study-buttons"><button id="copy-code" type="button">코드 복사</button><span id="copied" class="hint"></span></div>
 +                <p id="survey-line" class="lead"></p>
@@ -2056,7 +2057,7 @@ index 0000000..27fa5ec
 +};
 +window.MouseTracking = MouseTracking;
 diff --git a/web/openmatb.js b/web/openmatb.js
-index e26ec0b..de16c42 100644
+index e26ec0b..ecadf67 100644
 --- a/web/openmatb.js
 +++ b/web/openmatb.js
 @@ -15,6 +15,8 @@ import { connectScorm } from "./scorm.js";
@@ -2105,7 +2106,7 @@ index e26ec0b..de16c42 100644
  // ?lang= in the URL, otherwise the first browser language OpenMATB is translated in, otherwise English
  function detectLanguage() {
      const requested = new URLSearchParams(location.search).get("lang");
-@@ -359,6 +391,83 @@ checkBrowser();
+@@ -359,6 +391,89 @@ checkBrowser();
  // ?demo=1 (Demo tab of the website): runs the demo scenario, and nothing is recorded
  const DEMO = new URLSearchParams(location.search).get("demo") === "1";
  const DEMO_SCENARIO = "demo.txt";
@@ -2174,14 +2175,20 @@ index e26ec0b..de16c42 100644
 +        $("copied").textContent = "복사했습니다";
 +    };
 +    const survey = QUERY.get("form") || readConfigValue(readAppConfig(pyodide), "web_survey_url") || "";
++    const prefilled = survey.includes("{code}");
 +    $("survey-line").innerHTML = "";
 +    if (/^https:\/\//.test(survey)) {
 +        const link = document.createElement("a");
-+        link.href = survey;
++        link.href = survey.replace("{code}", encodeURIComponent(code));
 +        link.target = "_blank";
 +        link.rel = "noopener";
-+        link.textContent = "설문지 열기 (새 창)";
++        link.textContent = prefilled ? "설문지 열기 (새 창, 결과 코드가 자동으로 들어갑니다)" : "설문지 열기 (새 창)";
 +        $("survey-line").append(link);
++        if (prefilled) {
++            $("study-lead").textContent =
++                "아래 링크로 설문지를 열면 결과 코드가 자동으로 채워져 있습니다. 나머지 문항에 답하고 제출해야 참여가 완료됩니다. " +
++                "코드 칸이 비어 있으면 아래 코드를 복사해 붙여 넣어 주세요.";
++        }
 +    } else {
 +        $("survey-line").textContent = "안내받은 설문지 링크로 이동해 주세요.";
 +    }
@@ -2189,7 +2196,7 @@ index e26ec0b..de16c42 100644
  // config.ini values of the demo: no session number to acknowledge, and the session is not sent anywhere
  const DEMO_CONFIG = { display_session_number: "False", web_session_output: "none" };
  
-@@ -427,10 +536,23 @@ async function returnToCourse() {
+@@ -427,10 +542,23 @@ async function returnToCourse() {
  }
  
  async function loadFonts() {
@@ -2217,7 +2224,7 @@ index e26ec0b..de16c42 100644
      }
  }
  
-@@ -631,6 +753,11 @@ $("mode").addEventListener("change", () => {
+@@ -631,6 +759,11 @@ $("mode").addEventListener("change", () => {
  $("start").addEventListener("click", async () => {
      // Everything that needs the user gesture must happen before the first await
      const wantsFullscreen = $("fullscreen").checked;
@@ -2229,7 +2236,7 @@ index e26ec0b..de16c42 100644
      const fullscreen = wantsFullscreen ? document.documentElement.requestFullscreen().catch(() => {}) : null;
  
      const params = new URLSearchParams(location.search);
-@@ -639,6 +766,9 @@ $("start").addEventListener("click", async () => {
+@@ -639,6 +772,9 @@ $("start").addEventListener("click", async () => {
      if (DEMO && !params.has("scenario")) {
          params.set("scenario", DEMO_SCENARIO);
      }
@@ -2239,7 +2246,7 @@ index e26ec0b..de16c42 100644
      history.replaceState(null, "", `?${params}`);
  
      const file = $("mode").value === "replay" ? $("session-file").files[0] : undefined;
-@@ -729,6 +859,7 @@ function destinationItem(text, ok) {
+@@ -729,6 +865,7 @@ function destinationItem(text, ok) {
  
  // Dispatched by core.logger.Logger.end_session(), with the path of the session file: download it and/or send it
  document.addEventListener("openmatb-end", async (event) => {
@@ -2247,7 +2254,7 @@ index e26ec0b..de16c42 100644
      if (document.fullscreenElement) {
          document.exitFullscreen();
      }
-@@ -751,6 +882,9 @@ document.addEventListener("openmatb-end", async (event) => {
+@@ -751,6 +888,9 @@ document.addEventListener("openmatb-end", async (event) => {
          document.querySelector('#end [data-i18n="kept_in_browser"]').hidden = true;
          return;
      }
