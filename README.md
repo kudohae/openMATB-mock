@@ -28,3 +28,4 @@
 OpenMATB와 같은 CeCILL 2.1(`LICENSE`)을 따릅니다. Copyright 2023-2026 Julien Cegarra & Benoît Valéry, Institut National Universitaire Champollion. 한국어 수정분도 같은 라이선스로 공개합니다.
 - 끝 화면: 설문 링크가 구글 폼을 열면서 결과 코드 칸을 자동으로 채웁니다(config.ini `web_survey_url`의 `{code}`).
 - 연구자 점검용 `?fast=1`: 시나리오 시간이 10배 빠르게 흘러 약 2~3분 만에 끝 화면과 결과 코드를 확인할 수 있습니다(점수는 의미 없음, 참가자에게 주지 않음).
+- 결과 코드에 반쪽 점수 추가(신뢰도 추정용): 추적 RMS 앞·뒤 절반(`*_trk_rms_h1/_h2`), 교신 홀·짝 지시 정답 수(`*_cm_hit_o/_e`), 자동화가 놓친 이상 홀·짝 처리 수(`B_sm_man_hit_o/_e`).

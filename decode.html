@@ -50,7 +50,9 @@ const COLS = ["valid", "session", "browser", "voice", "win_h", "hidden", "pointe
   "B_trk_in", "B_trk_rms",
   "B_sm_hit", "B_sm_auto", "B_sm_miss", "B_sm_fa", "B_sm_rt",
   "B_cm_hit", "B_cm_miss", "B_cm_fa", "B_cm_bad_radio", "B_cm_bad_freq", "B_cm_bad_radio_freq", "B_cm_rt",
-  "B_rm_a", "B_rm_b", "B_rm"];
+  "B_rm_a", "B_rm_b", "B_rm",
+  "A_trk_rms_h1", "A_trk_rms_h2", "A_cm_hit_o", "A_cm_hit_e", "B_sm_man_hit_o", "B_sm_man_hit_e",
+  "B_trk_rms_h1", "B_trk_rms_h2", "B_cm_hit_o", "B_cm_hit_e"];
 const cell = v => v == null ? "" : /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
 let csv = "";
 document.getElementById("go").onclick = () => {

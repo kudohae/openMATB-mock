@@ -467,7 +467,7 @@ result_code(score_file(_session_path, Path("${APP_DIR}/includes/scenarios/korean
         $("survey-line").append(link);
         if (prefilled) {
             $("study-lead").textContent =
-                "아래 링크로 설문지를 열면 결과 코드가 자동으로 채워져 있습니다. 나머지 문항에 답하고 제출해야 참여가 완료됩니다. " +
+                "수고 많으셨습니다. 아래 링크로 설문지를 열면 결과 코드가 자동으로 채워져 있습니다. 설문에 반드시 참여해주시기 바랍니다. " +
                 "코드 칸이 비어 있으면 아래 코드를 복사해 붙여 넣어 주세요.";
         }
     } else {

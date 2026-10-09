@@ -33,10 +33,10 @@ index 9c25899..cbd7bbf 100644
  # (Chrome or Edge: Web Serial API)
 diff --git a/core/korean_score.py b/core/korean_score.py
 new file mode 100644
-index 0000000..de7a4cd
+index 0000000..fa556a4
 --- /dev/null
 +++ b/core/korean_score.py
-@@ -0,0 +1,183 @@
+@@ -0,0 +1,201 @@
 +# Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
 +# Institut National Universitaire Champollion (Albi, France).
 +# License : CeCILL, version 2.1 (see the LICENSE file)
@@ -53,6 +53,9 @@ index 0000000..de7a4cd
 +- Communications (A_main and B_main): counts of each signal detection value and mean response time of the hits (ms,
 +  from the end of the spoken message)
 +- Resources management (B_main): % of time tanks A and B are within tolerance
++- Split halves, for reliability (Spearman-Brown) and disattenuated correlations: tracking RMS of the first and second
++  half of each window (*_trk_rms_h1/_h2), communications hits of the odd and even prompts (*_cm_hit_o/_e), handled
++  automation misses of the odd and even ones (B_sm_man_hit_o/_e)
 +
 +result_code() returns "OM1-" + base64 of {"j": json, "c": checksum}: web/decode.html turns codes into a table.
 +"""
@@ -137,6 +140,12 @@ index 0000000..de7a4cd
 +        dev = [d for d in dev if not math.isnan(d)]
 +        out[f"{prefix}_trk_in"] = _r(100 * sum(inside) / len(inside)) if inside else None
 +        out[f"{prefix}_trk_rms"] = _r(math.sqrt(sum(d * d for d in dev) / len(dev))) if dev else None
++        start, end = phases[phase]
++        middle = (start + end) / 2
++        for half, keep in (("h1", lambda t: t < middle), ("h2", lambda t: t >= middle)):
++            part = [_float(r["value"]) for r in perf if r["address"] == "center_deviation" and keep(_float(r["scenario_time"]))]
++            part = [d for d in part if not math.isnan(d)]
++            out[f"{prefix}_trk_rms_{half}"] = _r(math.sqrt(sum(d * d for d in part) / len(part))) if part else None
 +
 +    block = window("B_main")
 +
@@ -157,17 +166,22 @@ index 0000000..de7a4cd
 +    # Main criterion: the malfunctions the automation misses (automaticsolver off), handled by the participant.
 +    # The onset of a logged malfunction is its end minus its response time (or minus the 10 s timeout if missed).
 +    start, end = phases["B_main"]
-+    manual = [(t, name) for t, name, auto in failures if start <= t < end and not auto]
++    manual = sorted((t, name) for t, name, auto in failures if start <= t < end and not auto)
 +    man_hits: list[float] = []
++    man_hit_index: list[int] = []  # Rank of the handled malfunctions among the automation misses (split halves)
 +    for e in events:
 +        if e.get("signal_detection") != "HIT" or e.get("resolved_by") != "human":
 +            continue
 +        rt = _float(e.get("response_time", "nan"))
 +        onset = _float(e.get("_time", "nan")) - rt / 1000
-+        if any(name == e.get("name") and abs(t - onset) < 1.5 for t, name in manual):
++        found = [i for i, (t, name) in enumerate(manual) if name == e.get("name") and abs(t - onset) < 1.5]
++        if found:
 +            man_hits.append(rt)
++            man_hit_index.append(found[0])
 +    out["B_sm_man_n"] = len(manual)
 +    out["B_sm_man_hit"] = len(man_hits)
++    out["B_sm_man_hit_o"] = sum(1 for i in man_hit_index if i % 2 == 0)  # 1st, 3rd, 5th...
++    out["B_sm_man_hit_e"] = sum(1 for i in man_hit_index if i % 2 == 1)
 +    out["B_sm_man_rt"] = _r(_mean(man_hits), 0)
 +
 +    # Communications: one sdt_value and one response_time per response or miss (task 1 and task 2)
@@ -178,6 +192,10 @@ index 0000000..de7a4cd
 +        for value in ("HIT", "MISS", "FA", "BAD_RADIO", "BAD_FREQ", "BAD_RADIO_FREQ"):
 +            out[f"{prefix}_cm_{value.lower()}"] = sdt.count(value)
 +        out[f"{prefix}_cm_rt"] = _r(_mean([_float(rt) for s, rt in zip(sdt, rts) if s == "HIT"]), 0)
++        # Prompts to the participant in order (a false alarm answers no prompt)
++        prompted = [value for value in sdt if value != "FA"]
++        out[f"{prefix}_cm_hit_o"] = prompted[0::2].count("HIT")
++        out[f"{prefix}_cm_hit_e"] = prompted[1::2].count("HIT")
 +
 +    # Resources management
 +    res = [r for r in block if r["type"] == "performance" and r["module"] == "resman"]
@@ -1802,7 +1820,7 @@ index d3baf8c..1294a77 100644
          shutil.copy(WEB / module, DIST / module)
      version: str = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 diff --git a/web/index.html b/web/index.html
-index ae1a68d..f47db68 100644
+index ae1a68d..5698665 100644
 --- a/web/index.html
 +++ b/web/index.html
 @@ -70,6 +70,17 @@
@@ -1858,7 +1876,7 @@ index ae1a68d..f47db68 100644
              <p class="subtitle"><span data-i18n="log_file">The log file</span> <strong id="end-file"></strong></p>
              <ul id="end-destinations" class="destinations" aria-live="polite"></ul>
 +            <section id="study-end" hidden>
-+                <p id="study-lead" class="lead">아래 <strong>결과 코드 전체</strong>를 복사해 설문지의 "결과 코드" 칸에 붙여 넣어 주세요. 코드를 제출해야 참여가 완료됩니다.</p>
++                <p id="study-lead" class="lead">수고 많으셨습니다. 아래 <strong>결과 코드 전체</strong>를 복사해 설문지의 "결과 코드" 칸에 붙여 넣어 주세요. 설문에 반드시 참여해주시기 바랍니다.</p>
 +                <textarea id="result-code" rows="5" readonly></textarea>
 +                <div class="study-buttons"><button id="copy-code" type="button">코드 복사</button><span id="copied" class="hint"></span></div>
 +                <p id="survey-line" class="lead"></p>
@@ -2065,7 +2083,7 @@ index 0000000..27fa5ec
 +};
 +window.MouseTracking = MouseTracking;
 diff --git a/web/openmatb.js b/web/openmatb.js
-index e26ec0b..e3308ed 100644
+index e26ec0b..335e7b7 100644
 --- a/web/openmatb.js
 +++ b/web/openmatb.js
 @@ -15,6 +15,8 @@ import { connectScorm } from "./scorm.js";
@@ -2194,7 +2212,7 @@ index e26ec0b..e3308ed 100644
 +        $("survey-line").append(link);
 +        if (prefilled) {
 +            $("study-lead").textContent =
-+                "아래 링크로 설문지를 열면 결과 코드가 자동으로 채워져 있습니다. 나머지 문항에 답하고 제출해야 참여가 완료됩니다. " +
++                "수고 많으셨습니다. 아래 링크로 설문지를 열면 결과 코드가 자동으로 채워져 있습니다. 설문에 반드시 참여해주시기 바랍니다. " +
 +                "코드 칸이 비어 있으면 아래 코드를 복사해 붙여 넣어 주세요.";
 +        }
 +    } else {
