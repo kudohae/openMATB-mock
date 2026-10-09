@@ -824,6 +824,10 @@ $("start").addEventListener("click", async () => {
     }
     status(null);
     try {
+        if (STUDY && QUERY.get("fast") === "1") {
+            // Researcher check of the whole study (end page, result code): scenario time 10 times faster
+            pyodide.runPython("import os; os.environ['OPENMATB_TIME_FACTOR'] = '10'"); // Read by core/study_gate.py
+        }
         await pyodide.runPythonAsync(`import runpy; runpy.run_path("main.py", run_name="__main__")`);
         $("pygletCanvas").focus();
     } catch (error) {

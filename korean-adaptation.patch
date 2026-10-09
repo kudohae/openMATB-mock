@@ -366,7 +366,7 @@ index 836be25..b41aa8c 100644
      from pyglet.gl import Config
      from pyglet.media import Player as AudioPlayer
 diff --git a/core/scheduler.py b/core/scheduler.py
-index 4fcf6cf..c9f0b79 100644
+index 4fcf6cf..8285553 100644
 --- a/core/scheduler.py
 +++ b/core/scheduler.py
 @@ -15,6 +15,7 @@ from core.clock import Clock
@@ -377,7 +377,7 @@ index 4fcf6cf..c9f0b79 100644
  from core.joystick import joystick
  from core.logger import get_logger
  from core.platform import IS_WEB, browser_environment, notify_page
-@@ -132,6 +133,10 @@ class Scheduler:
+@@ -132,9 +133,13 @@ class Scheduler:
          self.check_if_must_exit()
  
      def update_timers(self, dt: float) -> None:
@@ -387,7 +387,11 @@ index 4fcf6cf..c9f0b79 100644
 +            study_gate.skip_to = None
          # Update timers with dt
          if not self.is_scenario_time_paused():
-             self.scenario_time += dt
+-            self.scenario_time += dt
++            self.scenario_time += dt * study_gate.time_factor
+             get_logger().set_scenario_time(self.scenario_time)
+         timing.set_tick(self.scenario_time, running=not self.is_scenario_time_paused())
+ 
 @@ -202,7 +207,10 @@ class Scheduler:
                  if not self.is_scenario_time_paused():
                      self.pause_scenario()
@@ -402,10 +406,10 @@ index 4fcf6cf..c9f0b79 100644
          elif active_blocking_plugin is None:
 diff --git a/core/study_gate.py b/core/study_gate.py
 new file mode 100644
-index 0000000..ce18bda
+index 0000000..c81e7c4
 --- /dev/null
 +++ b/core/study_gate.py
-@@ -0,0 +1,16 @@
+@@ -0,0 +1,20 @@
 +# Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
 +# Institut National Universitaire Champollion (Albi, France).
 +# License : CeCILL, version 2.1 (see the LICENSE file)
@@ -416,12 +420,16 @@ index 0000000..ce18bda
 +
 +comm_hits: number of correct communications responses (HIT) by the participant so far.
 +skip_to: scenario time (s) the scheduler jumps to at its next update (the events in between are executed at once).
++time_factor: speed of the scenario time (10 with ?fast=1 in the web page address, to check the study end quickly).
 +"""
 +
 +from __future__ import annotations
 +
++import os
++
 +comm_hits: int = 0
 +skip_to: float | None = None
++time_factor: float = float(os.environ.get("OPENMATB_TIME_FACTOR", "1"))
 diff --git a/core/widgets/radio.py b/core/widgets/radio.py
 index b2f7f4a..fe185ae 100644
 --- a/core/widgets/radio.py
@@ -2057,7 +2065,7 @@ index 0000000..27fa5ec
 +};
 +window.MouseTracking = MouseTracking;
 diff --git a/web/openmatb.js b/web/openmatb.js
-index e26ec0b..ecadf67 100644
+index e26ec0b..e3308ed 100644
 --- a/web/openmatb.js
 +++ b/web/openmatb.js
 @@ -15,6 +15,8 @@ import { connectScorm } from "./scorm.js";
@@ -2246,7 +2254,18 @@ index e26ec0b..ecadf67 100644
      history.replaceState(null, "", `?${params}`);
  
      const file = $("mode").value === "replay" ? $("session-file").files[0] : undefined;
-@@ -729,6 +865,7 @@ function destinationItem(text, ok) {
+@@ -688,6 +824,10 @@ $("start").addEventListener("click", async () => {
+     }
+     status(null);
+     try {
++        if (STUDY && QUERY.get("fast") === "1") {
++            // Researcher check of the whole study (end page, result code): scenario time 10 times faster
++            pyodide.runPython("import os; os.environ['OPENMATB_TIME_FACTOR'] = '10'"); // Read by core/study_gate.py
++        }
+         await pyodide.runPythonAsync(`import runpy; runpy.run_path("main.py", run_name="__main__")`);
+         $("pygletCanvas").focus();
+     } catch (error) {
+@@ -729,6 +869,7 @@ function destinationItem(text, ok) {
  
  // Dispatched by core.logger.Logger.end_session(), with the path of the session file: download it and/or send it
  document.addEventListener("openmatb-end", async (event) => {
@@ -2254,7 +2273,7 @@ index e26ec0b..ecadf67 100644
      if (document.fullscreenElement) {
          document.exitFullscreen();
      }
-@@ -751,6 +888,9 @@ document.addEventListener("openmatb-end", async (event) => {
+@@ -751,6 +892,9 @@ document.addEventListener("openmatb-end", async (event) => {
          document.querySelector('#end [data-i18n="kept_in_browser"]').hidden = true;
          return;
      }
