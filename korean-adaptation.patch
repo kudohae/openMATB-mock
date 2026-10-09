@@ -1,0 +1,1630 @@
+diff --git a/config.ini b/config.ini
+index 9c25899..064c35b 100644
+--- a/config.ini
++++ b/config.ini
+@@ -23,7 +23,7 @@ fullscreen=True
+ scenario_path=
+ 
+ # Display the session number at start
+-display_session_number=True
++display_session_number=False
+ 
+ # Web version: check the browser on the start page (Firefox pauses for 0.1 to 1 s every few seconds)
+ # warn = display a notice | block = prevent starting (use Chrome or Edge) | off = no check
+@@ -34,12 +34,17 @@ web_browser_check=warn
+ # Comma separated list of: download (on the participant's computer), jatos, datapipe, webdav
+ # e.g. web_session_output=webdav, download   to send the file to the server and also download it
+ # See "Web version" in README.md to set up JATOS, DataPipe or a WebDAV folder
+-web_session_output=download
++web_session_output=none
+ # DataPipe experiment ID (https://pipe.jspsych.org), for "datapipe"
+ web_datapipe_experiment=
+ # WebDAV folder receiving the sessions (e.g. https://lab.example.org/openmatb/sessions/), for "webdav"
+ web_webdav_url=
+ 
++# Korean adaptation (2026): address of the survey linked from the end page of the study (also ?form= in the URL).
++# The session files stay in the participant's browser (web_session_output=none): the study uses the result code.
++# To also collect the raw files, set web_session_output=datapipe and web_datapipe_experiment.
++web_survey_url=
++
+ # Web version: psychophysiology (see "Psychophysiology in the browser" in README.md)
+ # parallelport plugin: write its values to a USB trigger box, whose serial port is chosen on the start page
+ # (Chrome or Edge: Web Serial API)
+diff --git a/core/korean_score.py b/core/korean_score.py
+new file mode 100644
+index 0000000..751cfee
+--- /dev/null
++++ b/core/korean_score.py
+@@ -0,0 +1,141 @@
++# Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
++# Institut National Universitaire Champollion (Albi, France).
++# License : CeCILL, version 2.1 (see the LICENSE file)
++#
++# Korean adaptation (2026): summary scores of the study session, shown as a result code to paste in a survey.
++
++"""Score a session of includes/scenarios/korean/study.txt.
++
++The scoring windows (scenario seconds) are read from the "# PHASES {...}" line of the scenario. Measures:
++- Task 1 (A_main, tracking alone) and task 2 (B_main): tracking, % of updates with the cursor in the target, and the
++  RMS distance to the center (pixels, with the window height to normalise it)
++- System monitoring (B_main): misses of the automation handled by the participant (HIT by a human), misses,
++  false alarms, mean response time (ms)
++- Communications (B_main): counts of each signal detection value and mean response time of the hits (ms)
++- Resources management (B_main): % of time tanks A and B are within tolerance
++
++result_code() returns "OM1-" + base64 of {"j": json, "c": checksum}: web/decode.html turns codes into a table.
++"""
++
++from __future__ import annotations
++
++import base64
++import csv
++import json
++import math
++from pathlib import Path
++from statistics import mean
++from typing import Any
++
++SCENARIO: Path = Path("includes/scenarios/korean/study.txt")
++CODE_PREFIX: str = "OM1-"
++
++
++def read_phases(scenario: Path = SCENARIO) -> dict[str, list[float]]:
++    for line in scenario.read_text(encoding="utf-8").splitlines():
++        if line.startswith("# PHASES "):
++            return json.loads(line[len("# PHASES ") :])
++    raise ValueError("No PHASES line in the scenario")
++
++
++def _float(value: str) -> float:
++    try:
++        return float(value)
++    except ValueError:
++        return float("nan")
++
++
++def _r(x: float | None, digits: int = 2) -> float | None:
++    return None if x is None or (isinstance(x, float) and math.isnan(x)) else round(x, digits)
++
++
++def _mean(values: list[float]) -> float | None:
++    values = [v for v in values if not math.isnan(v)]
++    return mean(values) if values else None
++
++
++def score_rows(rows: list[dict[str, str]], phases: dict[str, list[float]]) -> dict[str, Any]:
++    def window(name: str) -> list[dict[str, str]]:
++        start, end = phases[name]
++        return [r for r in rows if start <= _float(r["scenario_time"]) < end]
++
++    out: dict[str, Any] = {}
++    env: dict[str, str] = {r["address"] or r["type"]: r["value"] for r in rows if r["type"] in ("browser", "os")}
++    out["browser"] = env.get("browser", "")[:40]
++    manual: list[str] = [r["value"] for r in rows if r["type"] == "manual"]
++    out["voice"] = next((m.split(": ", 1)[1] for m in manual if m.startswith("Korean voice: ")), "")[:40]
++    sizes = [r["value"].split("x") for r in rows if r["type"] == "window"]  # "1366x768"
++    out["win_h"] = _r(_float(sizes[-1][-1]), 0) if sizes else None
++
++    for phase, prefix in (("A_main", "A"), ("B_main", "B")):
++        perf = [r for r in window(phase) if r["type"] == "performance" and r["module"] == "track"]
++        inside = [r["value"] == "True" for r in perf if r["address"] == "cursor_in_target" and r["value"] in ("True", "False")]
++        dev = [_float(r["value"]) for r in perf if r["address"] == "center_deviation"]
++        dev = [d for d in dev if not math.isnan(d)]
++        out[f"{prefix}_trk_in"] = _r(100 * sum(inside) / len(inside)) if inside else None
++        out[f"{prefix}_trk_rms"] = _r(math.sqrt(sum(d * d for d in dev) / len(dev))) if dev else None
++
++    block = window("B_main")
++
++    # System monitoring: rows come by groups (name, signal_detection, response_time, resolved_by)
++    sys_rows = [r for r in block if r["type"] == "performance" and r["module"] == "sysmon"]
++    events: list[dict[str, str]] = []
++    for r in sys_rows:
++        if r["address"] == "name" or not events:
++            events.append({})
++        events[-1][r["address"]] = r["value"]
++    hits = [e for e in events if e.get("signal_detection") == "HIT" and e.get("resolved_by") == "human"]
++    out["B_sm_hit"] = len(hits)
++    out["B_sm_auto"] = sum(1 for e in events if e.get("signal_detection") == "HIT" and e.get("resolved_by") != "human")
++    out["B_sm_miss"] = sum(1 for e in events if e.get("signal_detection") == "MISS")
++    out["B_sm_fa"] = sum(1 for e in events if e.get("signal_detection") == "FA")
++    out["B_sm_rt"] = _r(_mean([_float(e.get("response_time", "nan")) for e in hits]), 0)
++
++    # Communications: one sdt_value and one response_time per response or miss
++    com = [r for r in block if r["type"] == "performance" and r["module"] == "communications"]
++    sdt = [r["value"] for r in com if r["address"] == "sdt_value"]
++    rts = [r["value"] for r in com if r["address"] == "response_time"]
++    for value in ("HIT", "MISS", "FA", "BAD_RADIO", "BAD_FREQ", "BAD_RADIO_FREQ"):
++        out[f"B_cm_{value.lower()}"] = sdt.count(value)
++    out["B_cm_rt"] = _r(_mean([_float(rt) for s, rt in zip(sdt, rts) if s == "HIT"]), 0)
++
++    # Resources management
++    res = [r for r in block if r["type"] == "performance" and r["module"] == "resman"]
++    for tank in ("a", "b"):
++        flags = [r["value"] == "True" for r in res if r["address"] == f"{tank}_in_tolerance" and r["value"] in ("True", "False")]
++        out[f"B_rm_{tank}"] = _r(100 * sum(flags) / len(flags)) if flags else None
++    both = [x for x in (out["B_rm_a"], out["B_rm_b"]) if x is not None]
++    out["B_rm"] = _r(mean(both)) if both else None
++
++    # Pauses of the page (tab change) and freezes during the scored windows
++    out["hidden"] = sum(1 for r in rows if r["type"] == "visibility" and r["value"] in ("hidden", "False"))
++    out["freeze_ms"] = _r(sum(_float(r["value"]) for r in rows if r["type"] == "freeze"), 0)
++    return out
++
++
++def score_file(path: str | Path, scenario: Path = SCENARIO) -> dict[str, Any]:
++    with open(path, encoding="utf-8", newline="") as f:
++        rows = list(csv.DictReader(f))
++    result = score_rows(rows, read_phases(scenario))
++    result["file"] = Path(path).name
++    return result
++
++
++def fnv1a(text: str) -> str:
++    h = 0x811C9DC5
++    for ch in text:
++        h ^= ord(ch)
++        h = (h * 0x01000193) & 0xFFFFFFFF
++    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
++    out = ""
++    while True:
++        h, r = divmod(h, 36)
++        out = digits[r] + out
++        if h == 0:
++            return out
++
++
++def result_code(result: dict[str, Any]) -> str:
++    text = json.dumps(result, ensure_ascii=True, separators=(",", ":"))
++    payload = json.dumps({"j": text, "c": fnv1a(text)}, ensure_ascii=True, separators=(",", ":"))
++    return CODE_PREFIX + base64.b64encode(payload.encode("ascii")).decode("ascii")
+diff --git a/core/korean_tts.py b/core/korean_tts.py
+new file mode 100644
+index 0000000..14885d7
+--- /dev/null
++++ b/core/korean_tts.py
+@@ -0,0 +1,99 @@
++# Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
++# Institut National Universitaire Champollion (Albi, France).
++# License : CeCILL, version 2.1 (see the LICENSE file)
++#
++# Korean adaptation (2026): communications prompts read in Korean by the browser speech synthesis.
++
++"""Korean voice for the communications task (browser only).
++
++The recorded voices of OpenMATB are English or French. With voiceidiom=korean, the prompt is read by the browser
++speech synthesis (web/korean_tts.js) with a Korean voice. TTSPlayer has the subset of the player API used by the
++communications plugin: the prompt is over when `source` becomes None (so the response timer starts at the end of the
++spoken message, as with the recorded voices).
++"""
++
++from __future__ import annotations
++
++from typing import Any
++
++import pyglet.clock
++
++from core.platform import IS_WEB
++
++KOREAN_IDIOM: str = "korean"
++SPEECH_RATE: float = 1.0
++LEAD_SILENCE: float = 2.0  # The recorded prompts start with 20 "empty" samples of 0.1 s
++
++LETTERS: dict[str, str] = dict(
++    zip(
++        "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
++        "에이 비 씨 디 이 에프 지 에이치 아이 제이 케이 엘 엠 엔 오 피 큐 알 에스 티 유 브이 더블유 엑스 와이 제트".split(),
++    )
++)
++DIGITS: dict[str, str] = dict(zip("0123456789", "공 하나 둘 삼 넷 오 여섯 칠 팔 아홉".split()))
++RADIOS: dict[str, str] = {"NAV_1": "내브 원", "NAV_2": "내브 투", "COM_1": "컴 원", "COM_2": "컴 투"}
++
++
++def say_chars(text: str) -> str:
++    return " ".join(LETTERS.get(c.upper(), DIGITS.get(c, c)) for c in text if not c.isspace())
++
++
++def prompt_text(callsign: str, radio_name: str, freq: float) -> str:
++    """e.g. "에이 비 씨 하나 둘 삼, 에이 비 씨 하나 둘 삼. 무전기 내브 원, 주파수 하나 둘 여섯 점 오." """
++    call: str = say_chars(callsign)
++    digits: str = " ".join("점" if c == "." else DIGITS.get(c, c) for c in str(freq))
++    return f"{call}, {call}. 무전기 {RADIOS.get(radio_name.upper(), radio_name)}, 주파수 {digits}."
++
++
++def _tts() -> Any:
++    import js  # type: ignore[import-not-found]
++
++    return getattr(js.window, "KoreanTTS", None)
++
++
++def voice_name() -> str:
++    if not IS_WEB or _tts() is None:
++        return ""
++    return str(_tts().voiceName())
++
++
++class TTSPlayer:
++    def __init__(self, text: str, delay: float = LEAD_SILENCE) -> None:
++        self.text: str = text
++        self.delay: float = delay
++        self.volume: float = 1.0
++        self._id: Any = None
++        self._playing: bool = False
++        self._finished: bool = not IS_WEB or _tts() is None  # No speech synthesis: the prompt is over at once
++
++    @property
++    def source(self) -> Any:
++        if self._finished:
++            return None
++        if self._id is not None and bool(_tts().isDone(self._id)):
++            self._finished = True
++            self._playing = False
++            return None
++        return self
++
++    def play(self) -> None:
++        if self._finished or self._playing:
++            return
++        self._playing = True
++        pyglet.clock.schedule_once(self._speak, self.delay)
++
++    def _speak(self, dt: float) -> None:
++        if self._playing and not self._finished:
++            self._id = _tts().speak(self.text, SPEECH_RATE)
++
++    def pause(self) -> None:
++        # Like the recorded prompts, a paused message is read again from its beginning
++        self._playing = False
++        pyglet.clock.unschedule(self._speak)
++        if self._id is not None:
++            self._id = None
++            _tts().cancel()
++
++    def delete(self) -> None:
++        self.pause()
++        self._finished = True
+diff --git a/core/pyglet_compat.py b/core/pyglet_compat.py
+index 836be25..b41aa8c 100644
+--- a/core/pyglet_compat.py
++++ b/core/pyglet_compat.py
+@@ -27,6 +27,31 @@ if PYGLET_3:
+     if not hasattr(_AbstractImage, "anchor_y"):
+         _AbstractImage.anchor_x = 0
+         _AbstractImage.anchor_y = 0
++
++    # Korean adaptation: pyglet's browser window maps keys with event.key, which gives Hangul jamo ("ㅂ" for Q)
++    # when a Korean input method is on, so the letter keys of the tasks did nothing. Map letters and digits with
++    # event.code (the physical key), whatever the input method.
++    try:
++        import pyglet.window.emscripten as _web_window
++        from pyglet.window import key as _key
++
++        _js_key_to_pyglet = _web_window.js_key_to_pyglet
++
++        def _code_symbol(code: str) -> int | None:
++            if code.startswith("Key") and len(code) == 4:
++                return getattr(_key, code[3], None)
++            if code.startswith("Digit") and len(code) == 6:
++                return getattr(_key, "_" + code[5], None)
++            return None
++
++        def _js_key_to_pyglet_by_code(event: Any) -> Any:
++            symbol, modifiers = _js_key_to_pyglet(event)
++            by_code: int | None = _code_symbol(str(event.code or ""))
++            return (by_code if by_code is not None else symbol), modifiers
++
++        _web_window.js_key_to_pyglet = _js_key_to_pyglet_by_code
++    except ImportError:  # Desktop pyglet 3: no browser window
++        pass
+ else:
+     from pyglet.gl import Config
+     from pyglet.media import Player as AudioPlayer
+diff --git a/core/scheduler.py b/core/scheduler.py
+index 4fcf6cf..cf5c2ac 100644
+--- a/core/scheduler.py
++++ b/core/scheduler.py
+@@ -202,7 +202,10 @@ class Scheduler:
+                 if not self.is_scenario_time_paused():
+                     self.pause_scenario()
+                     self.paused_plugins = self.get_active_non_blocking_plugins()
+-                    self.execute_plugins_methods(self.paused_plugins, methods=["pause", "hide"])
++                    # A guide (plugins/guide.py) explains the tasks on screen: pause them without masking them
++                    keep_visible: bool = getattr(active_blocking_plugin, "keep_tasks_visible", False)
++                    methods: list[str] = ["pause"] if keep_visible else ["pause", "hide"]
++                    self.execute_plugins_methods(self.paused_plugins, methods=methods)
+ 
+         # In Replay mode: IT IS the play/pause button that manages the scenario resuming
+         elif active_blocking_plugin is None:
+diff --git a/includes/instructions/korean/01_welcome.txt b/includes/instructions/korean/01_welcome.txt
+new file mode 100644
+index 0000000..289c438
+--- /dev/null
++++ b/includes/instructions/korean/01_welcome.txt
+@@ -0,0 +1,17 @@
++<h1>연구에 참여해 주셔서 감사합니다</h1>
++
++<p>이 과제는 프랑스 연구진이 공개한 다중과업 연구 도구 <strong>OpenMATB</strong>를 한국어로 옮긴 것입니다. 조종 경험이나 사전 지식은 필요 없습니다.</p>
++
++<p>과제는 두 부분입니다. <strong>과제 1</strong>은 한 가지 일(추적)만 약 2분 30초, <strong>과제 2</strong>는 네 가지 일을 동시에 하는 것으로 설명과 연습을 포함해 약 15분입니다.</p>
++
++<p>왼손은 키보드, 오른손은 마우스에 두세요. 중간에 다른 창으로 가면 과제가 멈추니, 끝날 때까지 이 화면에 머물러 주세요.</p>
++<newpage>
++<h1>과제 1. 추적</h1>
++
++<p>화면 위쪽 가운데에 <strong>추적</strong> 칸이 나타납니다. 작은 원(커서)이 저절로 계속 떠내려갑니다.</p>
++
++<p><strong>추적 칸 안을 마우스 왼쪽 버튼으로 누른 채로 끌면</strong>, 끈 방향으로 커서를 미는 힘이 생깁니다. 많이 끌수록 세게 밀리고, 버튼을 놓으면 힘이 사라집니다. 비행기 조종간처럼 움직인다고 생각하세요.</p>
++
++<p>커서를 <strong>가운데 원 안</strong>에 최대한 오래 두는 것이 목표입니다. 원 밖으로 나가면 커서가 빨갛게 바뀝니다.</p>
++
++<p>먼저 <strong>30초 연습</strong>, 이어서 <strong>2분 본 과제</strong>를 합니다.</p>
+diff --git a/includes/instructions/korean/02_track_main.txt b/includes/instructions/korean/02_track_main.txt
+new file mode 100644
+index 0000000..25fa604
+--- /dev/null
++++ b/includes/instructions/korean/02_track_main.txt
+@@ -0,0 +1,2 @@
++<h1>연습 끝</h1>
++<p>이제 <strong>2분 본 과제</strong>입니다. 커서를 가운데 원 안에 최대한 오래 두세요.</p>
+diff --git a/includes/instructions/korean/03_task2_intro.txt b/includes/instructions/korean/03_task2_intro.txt
+new file mode 100644
+index 0000000..9eb6a1e
+--- /dev/null
++++ b/includes/instructions/korean/03_task2_intro.txt
+@@ -0,0 +1,8 @@
++<h1>과제 2. 네 가지 일 동시에 하기</h1>
++
++<p>이제 실제 조종사처럼 <strong>네 가지 일을 동시에</strong> 맡습니다. 여러 무인기와 자동화 장비를 혼자 감독하는 상황을 단순하게 옮긴 것입니다.</p>
++
++<p>다음 화면부터는 <strong>실제 과제 화면을 보면서</strong> 한 칸씩 설명합니다. 설명하는 칸은 <strong>주황색 테두리</strong>로 표시됩니다. 설명을 읽은 뒤 그 칸만 잠깐 직접 해 봅니다.</p>
++
++<p>키 배치는 이렇게 외우면 쉽습니다.</p>
++<p>· 숫자 줄 <strong>1 2 3 4 5 6</strong> : 시스템 감시<br>· 가운데 두 줄 <strong>Q W E R / A S D F</strong> : 연료 펌프<br>· 아랫줄 <strong>Z X C V B</strong> : 교신<br>· 마우스 : 추적</p>
+diff --git a/includes/instructions/korean/04_overview.txt b/includes/instructions/korean/04_overview.txt
+new file mode 100644
+index 0000000..9595009
+--- /dev/null
++++ b/includes/instructions/korean/04_overview.txt
+@@ -0,0 +1,3 @@
++<h1>화면 구성</h1>
++<p>왼쪽 위 <strong>시스템 감시</strong>, 가운데 위 <strong>추적</strong>, 왼쪽 아래 <strong>교신</strong>, 가운데 아래 <strong>연료 관리</strong>입니다. 오른쪽 아래는 펌프가 실제로 얼마나 흐르는지 보여 주는 표시판입니다.</p>
++<p>지금은 화면이 멈춰 있습니다. 하나씩 배워 봅시다.</p>
+diff --git a/includes/instructions/korean/05_sysmon.txt b/includes/instructions/korean/05_sysmon.txt
+new file mode 100644
+index 0000000..61d68b0
+--- /dev/null
++++ b/includes/instructions/korean/05_sysmon.txt
+@@ -0,0 +1,5 @@
++<h1>시스템 감시 (왼쪽 위)</h1>
++<p>계기 4개와 등 2개를 지켜보다가, 이상이 생기면 해당 키를 눌러 바로잡습니다.</p>
++<p>· 계기의 화살표가 가운데를 벗어나 <strong>위나 아래 끝으로 치우치면</strong> 그 계기 번호 <strong>1~4</strong><br>· 평소 켜져 있는 <strong>초록 등(5)이 꺼지면</strong> 5<br>· 평소 꺼져 있는 <strong>빨간 등(6)이 켜지면</strong> 6</p>
++<p>이 칸에는 <strong>자동 감시 장치</strong>가 있어 이상의 일부를 스스로 고칩니다(칸 아래 "자동" 표시). 하지만 <strong>자주 놓칩니다.</strong> 몇 초가 지나도 그대로인 이상은 직접 처리하세요. 10초 안에 처리하지 않으면 놓친 것으로 기록됩니다.</p>
++<p>스페이스 바를 누르면 이 칸만 <strong>30초</strong> 동안 직접 해 봅니다.</p>
+diff --git a/includes/instructions/korean/06_comm.txt b/includes/instructions/korean/06_comm.txt
+new file mode 100644
+index 0000000..1de48c2
+--- /dev/null
++++ b/includes/instructions/korean/06_comm.txt
+@@ -0,0 +1,5 @@
++<h1>교신 (왼쪽 아래)</h1>
++<p>스피커에서 관제 음성이 나옵니다. 맨 위에 적힌 <strong>내 호출부호</strong>(영문 3자와 숫자 3자)를 부를 때만 반응하세요. 다른 호출부호는 무시합니다.</p>
++<p>음성은 예를 들어 "에이 비 씨 하나 둘 삼, … 무전기 <strong>컴 원</strong>, 주파수 <strong>하나 둘 여섯 점 오</strong>"처럼 나옵니다. 숫자는 무전 방식으로 읽습니다(하나, 둘, 삼, 넷, 오, 여섯, 칠, 팔, 아홉, 공).</p>
++<p>· <strong>Z / X</strong> : 무전기 고르기(위 / 아래)<br>· <strong>C / V</strong> : 누르고 있는 동안 주파수 내리기 / 올리기<br>· <strong>B</strong> : 맞췄으면 확인</p>
++<p>스페이스 바를 누르면 이 칸만 <strong>45초</strong> 동안 직접 해 봅니다. 소리를 켜 두세요.</p>
+diff --git a/includes/instructions/korean/07_resman.txt b/includes/instructions/korean/07_resman.txt
+new file mode 100644
+index 0000000..200648b
+--- /dev/null
++++ b/includes/instructions/korean/07_resman.txt
+@@ -0,0 +1,7 @@
++<h1>연료 관리 (가운데 아래)</h1>
++<p>위쪽 큰 탱크 <strong>A와 B</strong>는 계속 연료를 씁니다. 두 탱크의 연료를 <strong>탱크 옆의 표시 범위 안</strong>에 유지하는 것이 목표입니다.</p>
++<newpage>
++<h1>연료 관리 : 펌프</h1>
++<p>삼각형이 펌프이고, 펌프에 적힌 글자 키를 누를 때마다 켜지고 꺼집니다. 켜진 펌프는 초록색이 되고 화살표 방향으로 연료를 옮깁니다. 빨간 펌프는 고장이라 잠시 쓸 수 없습니다.</p>
++<p>· 아래 탱크 C, D는 A, B에 연료를 보내고, 맨 아래 E, F는 연료가 무한합니다.<br>· 펌프 키 : <strong>Q W E R</strong> (A, B를 채움) / <strong>A S</strong> (C, D를 채움) / <strong>D F</strong> (A와 B 사이)</p>
++<p>스페이스 바를 누르면 이 칸만 <strong>45초</strong> 동안 직접 해 봅니다.</p>
+diff --git a/includes/instructions/korean/08_all.txt b/includes/instructions/korean/08_all.txt
+new file mode 100644
+index 0000000..6cbf869
+--- /dev/null
++++ b/includes/instructions/korean/08_all.txt
+@@ -0,0 +1,3 @@
++<h1>네 가지를 함께</h1>
++<p>이제 네 칸이 모두 움직입니다. 추적(마우스)을 하면서 감시·교신·연료를 함께 챙기세요. 어느 하나만 하지 말고 고르게 신경 쓰는 것이 중요합니다.</p>
++<p>스페이스 바를 누르면 <strong>1분 연습</strong>을 합니다. 연습은 점수에 들어가지 않습니다.</p>
+diff --git a/includes/instructions/korean/09_main.txt b/includes/instructions/korean/09_main.txt
+new file mode 100644
+index 0000000..1a7c527
+--- /dev/null
++++ b/includes/instructions/korean/09_main.txt
+@@ -0,0 +1,4 @@
++<h1>본 과제 시작</h1>
++<p>이제 <strong>10분 본 과제</strong>입니다. 중간에 멈출 수 없으니 끝까지 이 화면에 머물러 주세요.</p>
++<p>네 가지 일 모두 중요합니다. 자동 감시는 자주 놓친다는 점을 기억하세요.</p>
++<p>준비되면 스페이스 바를 누르세요.</p>
+diff --git a/includes/instructions/korean/10_end.txt b/includes/instructions/korean/10_end.txt
+new file mode 100644
+index 0000000..a801751
+--- /dev/null
++++ b/includes/instructions/korean/10_end.txt
+@@ -0,0 +1,3 @@
++<h1>수고하셨습니다</h1>
++<p>과제가 모두 끝났습니다. 스페이스 바를 누르면 다음 화면에 <strong>결과 코드</strong>가 나옵니다.</p>
++<p>그 코드를 복사해 설문지에 붙여 넣어야 참여가 완료됩니다.</p>
+diff --git a/includes/scenarios/korean/make_study.py b/includes/scenarios/korean/make_study.py
+new file mode 100644
+index 0000000..cae9678
+--- /dev/null
++++ b/includes/scenarios/korean/make_study.py
+@@ -0,0 +1,174 @@
++"""Generate study.txt (Korean study scenario) and phases.json (scoring windows, in scenario seconds).
++
++Task 1: single tracking (30 s practice, 120 s scored).
++Task 2: guided tutorial on the live task screen, 60 s combined practice, then a 10-minute block whose system
++monitoring events replicate the low-reliability block of Parasuraman, Molloy and Singh (1993) shipped with OpenMATB
++(16 malfunctions, 9 solved by the automation), with communications prompts and pump failures added.
++
++Scenario time stops while instructions/guide slides are shown, so the windows below are exact.
++"""
++
++import json
++from pathlib import Path
++
++HERE = Path(__file__).parent
++lines: list[str] = []
++
++
++def ts(sec: float) -> str:
++    sec = int(round(sec))
++    return f"{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}"
++
++
++def ev(sec: float, *parts: str) -> None:
++    lines.append(f"{ts(sec)};" + ";".join(parts))
++
++
++def note(text: str) -> None:
++    lines.append("")
++    lines.append(f"# {text}")
++
++
++def slides(sec: float, filename: str) -> None:
++    ev(sec, "instructions", "filename", f"korean/{filename}")
++    ev(sec, "instructions", "start")
++
++
++def guide(sec: float, filename: str, area: str, highlight: str = "none") -> None:
++    ev(sec, "guide", "area", area)
++    ev(sec, "guide", "highlight", highlight)
++    ev(sec, "guide", "filename", f"korean/{filename}")
++    ev(sec, "guide", "start")
++
++
++def sysmon_failure(sec: float, gauge: str, auto: bool, side: str | None = None) -> None:
++    ev(sec, "sysmon", "automaticsolver", str(auto))
++    if gauge.startswith("scales") and side is not None:
++        ev(sec, "sysmon", f"{gauge}-failure", side)
++    else:
++        ev(sec, "sysmon", f"{gauge}-failure", "True")
++
++
++def pump_failure(start: float, end: float, pump: int) -> None:
++    ev(start, "resman", f"pump-{pump}-state", "failure")
++    ev(end, "resman", f"pump-{pump}-state", "off")
++
++
++lines += [
++    "# Korean adaptation of OpenMATB for a selection study (2026). Generated by make_study.py: edit that file.",
++    "# Keys without a numeric keypad: sysmon 1-6, pumps Q W E R A S D F, communications Z X C V + B.",
++]
++note("Settings")
++ev(0, "system", "mousecontrol", "True")
++for i in range(1, 5):
++    ev(0, "sysmon", f"scales-{i}-name", str(i))
++    ev(0, "sysmon", f"scales-{i}-key", f"_{i}")
++ev(0, "sysmon", "lights-1-name", "5")
++ev(0, "sysmon", "lights-1-key", "_5")
++ev(0, "sysmon", "lights-2-name", "6")
++ev(0, "sysmon", "lights-2-key", "_6")
++ev(0, "sysmon", "automaticsolverdelay", "4000")  # As in Parasuraman et al. (1993) scenario
++ev(0, "sysmon", "feedbackduration", "1500")
++ev(0, "sysmon", "alerttimeout", "10000")
++for n, key in enumerate("QWERASDF", start=1):
++    ev(0, "resman", f"pump-{n}-key", key)
++for name, key in [("selectradioup", "Z"), ("selectradiodown", "X"), ("tunefrequencydown", "C"),
++                  ("tunefrequencyup", "V"), ("validateresponse", "B")]:
++    ev(0, "communications", f"keys-{name}", key)
++ev(0, "communications", "voiceidiom", "korean")
++ev(0, "communications", "voicegender", "tts")
++ev(0, "track", "cursorcolor", "#009900")
++
++# ---------------- Task 1: tracking only ----------------
++note("Task 1: tracking alone")
++slides(0, "01_welcome.txt")
++ev(0, "track", "start")
++A_PRACTICE, A_START, A_END = 0, 30, 150
++guide(A_START, "02_track_main.txt", "bottom", "topmid")
++ev(A_END, "track", "stop")
++
++# ---------------- Task 2: guided tutorial on the live screen ----------------
++T = A_END
++note("Task 2: tutorial")
++slides(T, "03_task2_intro.txt")
++for plugin in ("sysmon", "track", "communications", "resman"):
++    ev(T, plugin, "start")
++# Let every task draw itself for 1 s before the guides freeze the screen (a task paused before its first
++# update stays blank)
++T += 1
++for plugin in ("track", "communications", "resman"):
++    ev(T, plugin, "pause")
++guide(T, "04_overview.txt", "center")
++
++note("Tutorial: system monitoring alone (30 s)")
++guide(T, "05_sysmon.txt", "right", "topleft")
++# The automatic solver is one switch for the whole task: an automated failure must not overlap a manual one
++sysmon_failure(T + 3, "scales-2", False, "up")
++sysmon_failure(T + 14, "scales-4", True, "down")
++sysmon_failure(T + 19, "lights-1", False)
++T += 30
++ev(T, "sysmon", "pause")
++
++note("Tutorial: communications alone (45 s)")
++ev(T, "communications", "resume")
++guide(T, "06_comm.txt", "right", "bottomleft")
++ev(T + 1, "communications", "radioprompt", "own")
++ev(T + 22, "communications", "radioprompt", "other")
++T += 45
++ev(T, "communications", "pause")
++
++note("Tutorial: resources management alone (45 s)")
++ev(T, "resman", "resume")
++guide(T, "07_resman.txt", "top", "bottommid")
++pump_failure(T + 15, T + 30, 2)
++T += 45
++
++note("Tutorial: all tasks together (60 s, not scored)")
++for plugin in ("sysmon", "track", "communications"):
++    ev(T, plugin, "resume")
++guide(T, "08_all.txt", "center")
++sysmon_failure(T + 5, "scales-1", False, "down")
++ev(T + 9, "communications", "radioprompt", "own")
++sysmon_failure(T + 24, "lights-2", True)
++pump_failure(T + 26, T + 41, 3)
++ev(T + 33, "communications", "radioprompt", "other")
++sysmon_failure(T + 44, "scales-3", False, "up")
++T += 60
++
++# ---------------- Task 2: scored block (10 min) ----------------
++B_START = T
++note("Task 2: scored block (600 s)")
++guide(T, "09_main.txt", "center")
++# System monitoring: low-reliability block of Parasuraman et al. (1993), as in
++# includes/scenarios/Parasuraman_et_al_1993/low_reliability_block.txt (times, gauges, automation)
++PARASURAMAN = [
++    ("0:00:34", "scales-1", "down", True), ("0:00:59", "scales-3", "up", True),
++    ("0:01:42", "scales-2", "down", False), ("0:02:03", "scales-1", "up", True),
++    ("0:02:58", "scales-4", "down", False), ("0:03:26", "scales-2", "down", False),
++    ("0:04:04", "scales-1", "up", True), ("0:04:28", "lights-2", None, False),
++    ("0:05:38", "scales-4", "down", False), ("0:06:12", "scales-2", "up", False),
++    ("0:06:30", "lights-2", None, True), ("0:07:14", "scales-1", "down", True),
++    ("0:07:55", "scales-3", "up", True), ("0:08:17", "scales-1", "down", False),
++    ("0:08:55", "lights-1", None, False), ("0:09:31", "scales-4", "down", True),
++]
++for stamp, gauge, side, auto in PARASURAMAN:
++    h, m, s = (int(x) for x in stamp.split(":"))
++    sysmon_failure(B_START + h * 3600 + m * 60 + s, gauge, auto, side)
++# Communications: 10 own and 8 other prompts, not within 6 s of a malfunction
++for sec in (20, 78, 133, 190, 252, 300, 362, 418, 482, 545):
++    ev(B_START + sec, "communications", "radioprompt", "own")
++for sec in (48, 108, 160, 222, 330, 395, 455, 515):
++    ev(B_START + sec, "communications", "radioprompt", "other")
++# Resources management: four pump failures of 20 s
++for start, pump in ((88, 1), (205, 3), (322, 2), (447, 4)):
++    pump_failure(B_START + start, B_START + start + 20, pump)
++B_END = B_START + 600
++for plugin in ("sysmon", "track", "communications", "resman"):
++    ev(B_END, plugin, "stop")
++slides(B_END, "10_end.txt")
++
++
++PHASES = {"A_main": [A_START, A_END], "B_main": [B_START, B_END], "A_practice": [A_PRACTICE, A_START]}
++lines.insert(2, "# PHASES " + json.dumps(PHASES))  # Read by core/korean_score.py
++(HERE / "study.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
++print(f"study.txt: {len(lines)} lines, task 1 {A_START}-{A_END} s, task 2 block {B_START}-{B_END} s")
+diff --git a/includes/scenarios/korean/study.txt b/includes/scenarios/korean/study.txt
+new file mode 100644
+index 0000000..707b295
+--- /dev/null
++++ b/includes/scenarios/korean/study.txt
+@@ -0,0 +1,183 @@
++# Korean adaptation of OpenMATB for a selection study (2026). Generated by make_study.py: edit that file.
++# Keys without a numeric keypad: sysmon 1-6, pumps Q W E R A S D F, communications Z X C V + B.
++# PHASES {"A_main": [30, 150], "B_main": [331, 931], "A_practice": [0, 30]}
++
++# Settings
++0:00:00;system;mousecontrol;True
++0:00:00;sysmon;scales-1-name;1
++0:00:00;sysmon;scales-1-key;_1
++0:00:00;sysmon;scales-2-name;2
++0:00:00;sysmon;scales-2-key;_2
++0:00:00;sysmon;scales-3-name;3
++0:00:00;sysmon;scales-3-key;_3
++0:00:00;sysmon;scales-4-name;4
++0:00:00;sysmon;scales-4-key;_4
++0:00:00;sysmon;lights-1-name;5
++0:00:00;sysmon;lights-1-key;_5
++0:00:00;sysmon;lights-2-name;6
++0:00:00;sysmon;lights-2-key;_6
++0:00:00;sysmon;automaticsolverdelay;4000
++0:00:00;sysmon;feedbackduration;1500
++0:00:00;sysmon;alerttimeout;10000
++0:00:00;resman;pump-1-key;Q
++0:00:00;resman;pump-2-key;W
++0:00:00;resman;pump-3-key;E
++0:00:00;resman;pump-4-key;R
++0:00:00;resman;pump-5-key;A
++0:00:00;resman;pump-6-key;S
++0:00:00;resman;pump-7-key;D
++0:00:00;resman;pump-8-key;F
++0:00:00;communications;keys-selectradioup;Z
++0:00:00;communications;keys-selectradiodown;X
++0:00:00;communications;keys-tunefrequencydown;C
++0:00:00;communications;keys-tunefrequencyup;V
++0:00:00;communications;keys-validateresponse;B
++0:00:00;communications;voiceidiom;korean
++0:00:00;communications;voicegender;tts
++0:00:00;track;cursorcolor;#009900
++
++# Task 1: tracking alone
++0:00:00;instructions;filename;korean/01_welcome.txt
++0:00:00;instructions;start
++0:00:00;track;start
++0:00:30;guide;area;bottom
++0:00:30;guide;highlight;topmid
++0:00:30;guide;filename;korean/02_track_main.txt
++0:00:30;guide;start
++0:02:30;track;stop
++
++# Task 2: tutorial
++0:02:30;instructions;filename;korean/03_task2_intro.txt
++0:02:30;instructions;start
++0:02:30;sysmon;start
++0:02:30;track;start
++0:02:30;communications;start
++0:02:30;resman;start
++0:02:31;track;pause
++0:02:31;communications;pause
++0:02:31;resman;pause
++0:02:31;guide;area;center
++0:02:31;guide;highlight;none
++0:02:31;guide;filename;korean/04_overview.txt
++0:02:31;guide;start
++
++# Tutorial: system monitoring alone (30 s)
++0:02:31;guide;area;right
++0:02:31;guide;highlight;topleft
++0:02:31;guide;filename;korean/05_sysmon.txt
++0:02:31;guide;start
++0:02:34;sysmon;automaticsolver;False
++0:02:34;sysmon;scales-2-failure;up
++0:02:45;sysmon;automaticsolver;True
++0:02:45;sysmon;scales-4-failure;down
++0:02:50;sysmon;automaticsolver;False
++0:02:50;sysmon;lights-1-failure;True
++0:03:01;sysmon;pause
++
++# Tutorial: communications alone (45 s)
++0:03:01;communications;resume
++0:03:01;guide;area;right
++0:03:01;guide;highlight;bottomleft
++0:03:01;guide;filename;korean/06_comm.txt
++0:03:01;guide;start
++0:03:02;communications;radioprompt;own
++0:03:23;communications;radioprompt;other
++0:03:46;communications;pause
++
++# Tutorial: resources management alone (45 s)
++0:03:46;resman;resume
++0:03:46;guide;area;top
++0:03:46;guide;highlight;bottommid
++0:03:46;guide;filename;korean/07_resman.txt
++0:03:46;guide;start
++0:04:01;resman;pump-2-state;failure
++0:04:16;resman;pump-2-state;off
++
++# Tutorial: all tasks together (60 s, not scored)
++0:04:31;sysmon;resume
++0:04:31;track;resume
++0:04:31;communications;resume
++0:04:31;guide;area;center
++0:04:31;guide;highlight;none
++0:04:31;guide;filename;korean/08_all.txt
++0:04:31;guide;start
++0:04:36;sysmon;automaticsolver;False
++0:04:36;sysmon;scales-1-failure;down
++0:04:40;communications;radioprompt;own
++0:04:55;sysmon;automaticsolver;True
++0:04:55;sysmon;lights-2-failure;True
++0:04:57;resman;pump-3-state;failure
++0:05:12;resman;pump-3-state;off
++0:05:04;communications;radioprompt;other
++0:05:15;sysmon;automaticsolver;False
++0:05:15;sysmon;scales-3-failure;up
++
++# Task 2: scored block (600 s)
++0:05:31;guide;area;center
++0:05:31;guide;highlight;none
++0:05:31;guide;filename;korean/09_main.txt
++0:05:31;guide;start
++0:06:05;sysmon;automaticsolver;True
++0:06:05;sysmon;scales-1-failure;down
++0:06:30;sysmon;automaticsolver;True
++0:06:30;sysmon;scales-3-failure;up
++0:07:13;sysmon;automaticsolver;False
++0:07:13;sysmon;scales-2-failure;down
++0:07:34;sysmon;automaticsolver;True
++0:07:34;sysmon;scales-1-failure;up
++0:08:29;sysmon;automaticsolver;False
++0:08:29;sysmon;scales-4-failure;down
++0:08:57;sysmon;automaticsolver;False
++0:08:57;sysmon;scales-2-failure;down
++0:09:35;sysmon;automaticsolver;True
++0:09:35;sysmon;scales-1-failure;up
++0:09:59;sysmon;automaticsolver;False
++0:09:59;sysmon;lights-2-failure;True
++0:11:09;sysmon;automaticsolver;False
++0:11:09;sysmon;scales-4-failure;down
++0:11:43;sysmon;automaticsolver;False
++0:11:43;sysmon;scales-2-failure;up
++0:12:01;sysmon;automaticsolver;True
++0:12:01;sysmon;lights-2-failure;True
++0:12:45;sysmon;automaticsolver;True
++0:12:45;sysmon;scales-1-failure;down
++0:13:26;sysmon;automaticsolver;True
++0:13:26;sysmon;scales-3-failure;up
++0:13:48;sysmon;automaticsolver;False
++0:13:48;sysmon;scales-1-failure;down
++0:14:26;sysmon;automaticsolver;False
++0:14:26;sysmon;lights-1-failure;True
++0:15:02;sysmon;automaticsolver;True
++0:15:02;sysmon;scales-4-failure;down
++0:05:51;communications;radioprompt;own
++0:06:49;communications;radioprompt;own
++0:07:44;communications;radioprompt;own
++0:08:41;communications;radioprompt;own
++0:09:43;communications;radioprompt;own
++0:10:31;communications;radioprompt;own
++0:11:33;communications;radioprompt;own
++0:12:29;communications;radioprompt;own
++0:13:33;communications;radioprompt;own
++0:14:36;communications;radioprompt;own
++0:06:19;communications;radioprompt;other
++0:07:19;communications;radioprompt;other
++0:08:11;communications;radioprompt;other
++0:09:13;communications;radioprompt;other
++0:11:01;communications;radioprompt;other
++0:12:06;communications;radioprompt;other
++0:13:06;communications;radioprompt;other
++0:14:06;communications;radioprompt;other
++0:06:59;resman;pump-1-state;failure
++0:07:19;resman;pump-1-state;off
++0:08:56;resman;pump-3-state;failure
++0:09:16;resman;pump-3-state;off
++0:10:53;resman;pump-2-state;failure
++0:11:13;resman;pump-2-state;off
++0:12:58;resman;pump-4-state;failure
++0:13:18;resman;pump-4-state;off
++0:15:31;sysmon;stop
++0:15:31;track;stop
++0:15:31;communications;stop
++0:15:31;resman;stop
++0:15:31;instructions;filename;korean/10_end.txt
++0:15:31;instructions;start
+diff --git a/includes/sounds/korean/tts/empty.wav b/includes/sounds/korean/tts/empty.wav
+new file mode 100644
+index 0000000000000000000000000000000000000000..8feaf82918e2cf9950accb0792a090748b5612b9
+GIT binary patch
+literal 8864
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/locales/ko_KR/LC_MESSAGES/openmatb.mo b/locales/ko_KR/LC_MESSAGES/openmatb.mo
+new file mode 100644
+index 0000000000000000000000000000000000000000..78f32f1da19874a56eae56e79eae3fd59ab26f15
+GIT binary patch
+literal 1562
+zcmZ{iU1(cn7{_0AezeZ7DHFtt7e8CE)+-s&GHM%Py0x`U8D$sqc=EPAH0PXnKFWHR
+zHtCFQoEtP<I+7Y(x;Y&Zx~$6};;jQgMDW53LGfao_dPeV8}Y{flbm5UFp&J-=btCf
+z`+xo?zwO&oWOzM?_p^AvdJk3qz23T)u?JBOfP26=_$c^p#3}G0)U)6d;78yiU^ddv
+zfL*B1fe(N+kmh_1(wsWD7yK^z{)b5a8N46*AK=5_P4H>(R>Zycb@Ug&C!xO%J_Qbg
+z-QW~Rev;th;5<n8eGJmv_2~ODNdCWx>T4kFdjs4L{sfZWo8SR31Rn!mf=K(k0aD*U
+zR3{=H1NTAy5Trc(NY8@gV+F)0wh`$S@Ojj=sQy0Uk0Aa2mxzBx`d?rl^uNJZz?ZQU
+z^^Jpc?*~!sg5+}%q@41RUIr<juRzMb1yW8oK<fV$q&dGw^)2uj)c=6wdp|Yx2s7<1
+z^s>Rp#3&omQYqJ%v3OS(f6-+_wrTp7p=+LDTU1(}Vfli^Q(D>;N$we@;O)-1<q0Ro
+zCqzo<9*aAU?ew_4Ebi(t{=RQOa&;|@U!I^dKKN)_SVsmEZy#ibEZ1{<y>rKr!I8<q
+z!)(On(?&|TeA@P{BpcIwSFkbROxupBSvt;+a9utzHaHaLp3U{!*6z~hwUm+6JoNi!
+zn!BFn`7Rq5re;`%HM47hapBs&qvJ-**Jgw%ERRj-vm)uI(8)TRagDpWur$Z8cPVg!
+zd?2*R4-LmCyot01pA!qNCrobImf_hBO-eYLK1YYivHs!Fqa!gsqRksKWb&xykS#W4
+z`+OD|d9#9dg5z^yftiN&TKgfuTVG-!En?ggC%pc23hTVd^;ykvg*Pync&G0`_hHSN
+z@v%sZ&)LV{8}DX4@_J6KH@Mo&t4g7lsm;^!vkfMf8aymD)lOONWN?TceQ@=(TCK9+
+zN=}{plm*-023J~Kt(Jp&?v5v}a@8<fVX9P<TcytPmP@6eo(Y<DDw+CXS)MOoP)k+I
+za;wFIYfX8vAkScaIoPhMm8)_!A6zdSWU82l8>aFlG8PsJs)9Suo`hY7Bl@|j7S+WJ
+zwS?=RFtt((PnA@qfdiNIH5xDTIl0x4mm0j|JuF_re7RctpYDSE{4x(WimK8KizSt7
+zs&i{BJXHwSa$IE>!)zH5eW@y$JGNJ6>)471jf}i-xoxgmWH5-`As`KYI~WXHF5Okh
+z?L3lh|4VkSKm({=F7u#H@i4WsrmBlfm2>^7n3J2O7{|7hjym5`m3H7fTtfD=ctKV(
+Moj7S-xszl60_k!582|tP
+
+literal 0
+HcmV?d00001
+
+diff --git a/locales/ko_KR/LC_MESSAGES/openmatb.po b/locales/ko_KR/LC_MESSAGES/openmatb.po
+new file mode 100644
+index 0000000..6bdfc04
+--- /dev/null
++++ b/locales/ko_KR/LC_MESSAGES/openmatb.po
+@@ -0,0 +1,103 @@
++msgid ""
++msgstr ""
++"Content-Type: text/plain; charset=UTF-8\n"
++"Language: ko_KR\n"
++
++msgid "System monitoring"
++msgstr "시스템 감시"
++
++msgid "Tracking"
++msgstr "추적"
++
++msgid "Scheduling"
++msgstr "일정"
++
++msgid "Communications"
++msgstr "교신"
++
++msgid "Resources management"
++msgstr "연료 관리"
++
++msgid "Instructions"
++msgstr "안내"
++
++msgid "Performance"
++msgstr "수행"
++
++msgid "Warning"
++msgstr "주의"
++
++msgid "Error(s)"
++msgstr "오류"
++
++msgid "Space"
++msgstr "스페이스"
++
++msgid "Escape"
++msgstr "Esc"
++
++msgid "Exit"
++msgstr "종료"
++
++msgid "Continue"
++msgstr "계속"
++
++msgid "Session ID: %s"
++msgstr "세션 번호: %s"
++
++msgid "min."
++msgstr "분"
++
++msgid "You hit the Escape key"
++msgstr "Esc 키를 눌렀습니다"
++
++msgid "Exit OpenMATB?"
++msgstr "과제를 그만두시겠습니까?"
++
++msgid "Pause"
++msgstr "일시 정지"
++
++msgid "MANUAL"
++msgstr "수동"
++
++msgid "AUTO"
++msgstr "자동"
++
++msgid "Callsign \t\t %s"
++msgstr "내 호출부호 \t\t %s"
++
++msgid "Press SPACE to validate"
++msgstr "스페이스 바를 눌러 확인하세요"
++
++msgid "Press SPACE to continue"
++msgstr "스페이스 바를 누르면 계속합니다"
++
++msgid "Select a scenario"
++msgstr "시나리오 선택"
++
++msgid "Select a session"
++msgstr "세션 선택"
++
++msgid "UP/DOWN: Navigate"
++msgstr "위/아래: 이동"
++
++msgid "Enter: Select"
++msgstr "Enter: 선택"
++
++msgid "Esc: Quit"
++msgstr "Esc: 나가기"
++
++msgid "No files found"
++msgstr "파일 없음"
++
++msgid "(empty)"
++msgstr "(비어 있음)"
++
++msgid "Pump status"
++msgstr "펌프 상태"
++
++msgid "Elapsed time \t %s"
++msgstr "경과 시간 \t %s"
++
++msgid "Remaining time \t %s"
++msgstr "남은 시간 \t %s"
+diff --git a/plugins/__init__.py b/plugins/__init__.py
+index 9709023..2eab59d 100644
+--- a/plugins/__init__.py
++++ b/plugins/__init__.py
+@@ -6,6 +6,7 @@ from .abstractplugin import AbstractPlugin  # noqa: F401
+ from .communications import Communications  # noqa: F401
+ from .genericscales import Genericscales  # noqa: F401
+ from .generictrigger import Generictrigger  # noqa: F401
++from .guide import Guide  # noqa: F401
+ from .instructions import Instructions  # noqa: F401
+ from .labstreaminglayer import Labstreaminglayer  # noqa: F401
+ from .parallelport import Parallelport  # noqa: F401
+diff --git a/plugins/communications.py b/plugins/communications.py
+index 1affd2a..0749fbd 100644
+--- a/plugins/communications.py
++++ b/plugins/communications.py
+@@ -17,6 +17,7 @@ from core.constants import PATHS as P
+ from core.constants import REPLAY_MODE
+ from core.container import Container
+ from core.error import get_errors
++from core.korean_tts import KOREAN_IDIOM, TTSPlayer, prompt_text, voice_name
+ from core.platform import IS_WEB
+ from core.pseudorandom import choice, randint, uniform, xeger
+ from core.widgets import Radio, Simpletext
+@@ -142,6 +143,12 @@ class Communications(AbstractPlugin):
+         if new_path == self.sound_path:
+             return
+ 
++        # Korean: the browser speech synthesis reads the prompts, no recorded samples
++        if self.parameters["voiceidiom"] == KOREAN_IDIOM:
++            self.sound_path = new_path
++            self.logger.log_manual_entry(f"Korean voice: {voice_name() or 'none'}")
++            return
++
+         if not new_path.exists():
+             get_errors().add_error(
+                 _("Sound path %s does not exist. Check voiceidiom/voicegender combination.") % new_path
+@@ -285,10 +292,12 @@ class Communications(AbstractPlugin):
+             radio["targetfreq"] = random_frequency
+             radio["is_prompting"] = True
+ 
+-        sounds: list[Any] = self.group_audio_files(callsign, radio_name, random_frequency)
+-
+         try:
+-            self.player: SequencePlayer = SequencePlayer(sounds)
++            if self.parameters["voiceidiom"] == KOREAN_IDIOM:
++                self.player = TTSPlayer(prompt_text(callsign, radio_name, random_frequency))
++                self.logger.log_manual_entry(f"Korean prompt: {prompt_text(callsign, radio_name, random_frequency)}")
++            else:
++                self.player = SequencePlayer(self.group_audio_files(callsign, radio_name, random_frequency))
+             self.player.play()
+         except Exception:
+             self.logger.log_manual_entry("Audio prompt playback failed")
+diff --git a/plugins/guide.py b/plugins/guide.py
+new file mode 100644
+index 0000000..e967d6b
+--- /dev/null
++++ b/plugins/guide.py
+@@ -0,0 +1,117 @@
++# Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
++# Institut National Universitaire Champollion (Albi, France).
++# License : CeCILL, version 2.1 (see the LICENSE file)
++#
++# Korean adaptation (2026): a guide box that explains a task while the real task screen stays visible.
++
++"""Guide: instruction slides shown in a box over part of the screen, the tasks staying visible (paused).
++
++Like Instructions (same slide files, SPACE to continue), but the slides are not fullscreen:
++- area: where the box goes, "right" (right 62 % of the screen), "top", "bottom" (half of the screen)
++  or "center" (a centered box)
++- highlight: a task location to frame (topleft, topmid, bottomleft, bottommid, topright, bottomright) or "none"
++"""
++
++from __future__ import annotations
++
++from typing import Any
++
++from core import validation
++from core.constants import COLORS as C
++from core.container import Container
++from core.widgets import Frame
++from core.window import Window
++from plugins.instructions import Instructions
++
++AREAS: list[str] = ["right", "top", "bottom", "center"]
++HIGHLIGHTS: list[str] = ["none", "topleft", "topmid", "topright", "bottomleft", "bottommid", "bottomright"]
++HIGHLIGHT_COLOR: tuple[int, int, int, int] = (230, 120, 0, 255)
++
++
++class Guide(Instructions):
++    def __init__(self) -> None:
++        super().__init__()
++        self.parameters.update(dict(area="right", highlight="none"))
++        self.keep_tasks_visible: bool = True  # Read by the scheduler
++        self.validation_dict.update(
++            {
++                "area": (validation.is_in_list, AREAS),
++                "highlight": (validation.is_in_list, HIGHLIGHTS),
++            }
++        )
++
++    def guide_container(self) -> Container:
++        w: float = Window.MainWindow.width
++        h: float = Window.MainWindow.height
++        area: str = self.parameters["area"]
++        m: float = 0.015 * min(w, h)  # Margin
++        if area == "right":
++            return Container("guide", 0.37 * w + m, m, 0.63 * w - 2 * m, h - 2 * m)
++        if area == "top":
++            return Container("guide", m, h / 2 + m, w - 2 * m, h / 2 - 2 * m)
++        if area == "bottom":
++            return Container("guide", m, m, w - 2 * m, h / 2 - 2 * m)
++        return Container("guide", 0.15 * w, 0.12 * h, 0.7 * w, 0.76 * h)
++
++    def create_widgets(self) -> None:
++        super().create_widgets()
++        # No fullscreen background: the tasks stay visible around the box
++        background: str = self.get_widget_fullname("background")
++        if background in self.widgets:
++            self.widgets[background].hide()
++            del self.widgets[background]
++
++        # The plugin is reused from one guide to the next: drop the frame of a previous guide
++        previous: str = self.get_widget_fullname("highlight")
++        if previous in self.widgets:
++            self.widgets[previous].hide()
++            del self.widgets[previous]
++
++        if self.parameters["highlight"] != "none":
++            target: Container | None = Window.MainWindow.get_container(self.parameters["highlight"])
++            if target is not None:
++                self.add_widget(
++                    "highlight",
++                    Frame,
++                    container=target,
++                    fill_color=None,
++                    border_color=HIGHLIGHT_COLOR,
++                    border_thickness=0.03,
++                    draw_order=self.m_draw,
++                )
++
++        self.container = self.guide_container()
++        self.add_widget(
++            "box",
++            Frame,
++            container=self.container,
++            fill_color=(255, 255, 255, 245),
++            border_color=HIGHLIGHT_COLOR,
++            border_thickness=0.008,
++            draw_order=self.m_draw,
++        )
++
++    def make_slide_graphs(self) -> None:
++        super().make_slide_graphs()
++        # The slide widgets are recreated at each slide: keep the box and the highlight below them
++        for name in ("box", "highlight"):
++            widget: Any = self.get_widget(name)
++            if widget is not None:
++                widget.show()
++
++    # Not fullscreen: don't hide the black bands of the task titles
++    def show(self) -> None:
++        if self.is_visible():
++            return
++        self.visible = True
++        self.update_can_receive_key()
++        for _name, widget in self.widgets.items():
++            widget.show()
++
++    def hide(self) -> None:
++        if not self.is_visible():
++            return
++        self.visible = False
++        self.update_can_receive_key()
++        for _name, widget in self.widgets.items():
++            widget.hide()
+diff --git a/plugins/resman.py b/plugins/resman.py
+index 821bb2d..19e874f 100644
+--- a/plugins/resman.py
++++ b/plugins/resman.py
+@@ -18,6 +18,11 @@ from core.window import Window
+ from plugins.abstractplugin import AbstractPlugin
+ 
+ 
++def key_label(key: str) -> str:
++    """Korean adaptation: pumps show their key (Q, W...) rather than their number, as keys are not the numpad."""
++    return key.replace("NUM_", "").lstrip("_") or key
++
++
+ class Resman(AbstractPlugin):
+     def __init__(self, label: str = "", taskplacement: str = "bottommid", taskupdatetime: int = 2000) -> None:
+         super().__init__(_("Resources management"), taskplacement, taskupdatetime)
+@@ -205,7 +210,7 @@ class Resman(AbstractPlugin):
+                     f"pump_{pump_number}_flow",
+                     PumpFlow,
+                     container=flow_container,
+-                    label=pump_number,
++                    label=key_label(this_pump["key"]),
+                     flow=this_pump["flow"],
+                 )
+ 
+@@ -240,7 +245,7 @@ class Resman(AbstractPlugin):
+                 container=None,
+                 from_cont=from_cont,
+                 to_cont=to_cont,
+-                pump_n=pump_number,
++                pump_n=key_label(this_pump["key"]),
+                 color=self.parameters["pumpcoloroff"],
+                 pump_width=pump_width,
+                 y_offset=y_offset,
+diff --git a/web/build.py b/web/build.py
+index d3baf8c..9502492 100644
+--- a/web/build.py
++++ b/web/build.py
+@@ -39,6 +39,7 @@ from xml.sax.saxutils import escape, quoteattr
+ ROOT: Path = Path(__file__).resolve().parent.parent
+ WEB: Path = ROOT / "web"
+ DIST: Path = WEB / "dist"
++KR_FONTS_LOCAL: Path | None = None  # Set by a build wrapper that has the fontsource package on disk
+ 
+ # Keep in sync with requirements.txt
+ WHEELS: list[str] = ["pyglet==3.0.dev10", "rstr==3.1.0"]
+@@ -46,6 +47,7 @@ WHEELS: list[str] = ["pyglet==3.0.dev10", "rstr==3.1.0"]
+ # JavaScript modules of the page (web/*.js), copied as is
+ PAGE_MODULES: tuple[str, ...] = (
+     "openmatb.js",
++    "korean_tts.js",
+     "session_output.js",
+     "scorm.js",
+     "cmi5.js",
+@@ -95,6 +97,61 @@ CMI5_NAMESPACE: str = "https://w3id.org/xapi/profiles/cmi5/v1/CourseStructure.xs
+ FONT_URL: str = "https://cdn.jsdelivr.net/npm/@fontsource/noto-sans@5.3.0/files/noto-sans-latin-{weight}-normal.woff2"
+ FONT_WEIGHTS: tuple[int, ...] = (400, 700)
+ 
++# Korean adaptation: Noto Sans KR, split by unicode-range (fontsource). Only the subsets holding a character used by
++# the Korean texts of the app (instructions, scenarios, locale) are shipped, and listed in fonts/korean.json.
++KR_FONT_BASE: str = "https://cdn.jsdelivr.net/npm/@fontsource/noto-sans-kr@5.3.0/"
++LATIN_RANGE: str = (
++    "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,"
++    "U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
++)
++
++
++def korean_characters() -> set[str]:
++    chars: set[str] = set()
++    for folder in ("includes/instructions", "includes/scenarios", "includes/questionnaires", "locales/ko_KR"):
++        for path in (ROOT / folder).rglob("*"):
++            if path.is_file() and path.suffix in (".txt", ".po"):
++                chars |= {c for c in path.read_text(encoding="utf-8", errors="ignore") if ord(c) > 0x2FF}
++    return chars
++
++
++def parse_ranges(text: str) -> list[tuple[int, int]]:
++    ranges: list[tuple[int, int]] = []
++    for part in text.split(","):
++        part = part.strip().upper().replace("U+", "")
++        low, _, high = part.partition("-")
++        ranges.append((int(low, 16), int(high or low, 16)))
++    return ranges
++
++
++def read_kr_source(relative: str, local: Path | None) -> bytes:
++    if local is not None:
++        return (local / relative).read_bytes()
++    with urllib.request.urlopen(KR_FONT_BASE + relative) as response:
++        return response.read()
++
++
++def copy_korean_fonts(local: Path | None = None) -> None:
++    """local: an unpacked @fontsource/noto-sans-kr package (else downloaded from the CDN)."""
++    chars: list[int] = sorted(ord(c) for c in korean_characters())
++    faces: list[dict] = []
++    for weight in FONT_WEIGHTS:
++        css: str = read_kr_source(f"{weight}.css", local).decode("utf-8")
++        for block in re.findall(r"@font-face\s*{(.*?)}", css, re.S):
++            file_match = re.search(r"url\(\./files/([^)]+\.woff2)\)", block)
++            range_match = re.search(r"unicode-range:\s*([^;]+);", block)
++            if not (file_match and range_match):
++                continue
++            ranges = parse_ranges(range_match.group(1))
++            if not any(low <= c <= high for c in chars for low, high in ranges):
++                continue
++            (DIST / "fonts" / "kr").mkdir(parents=True, exist_ok=True)
++            (DIST / "fonts" / "kr" / file_match.group(1)).write_bytes(read_kr_source("files/" + file_match.group(1), local))
++            faces.append({"file": "kr/" + file_match.group(1), "weight": weight, "range": range_match.group(1).strip()})
++    (DIST / "fonts" / "korean.json").write_text(json.dumps({"latin": LATIN_RANGE, "faces": faces}), encoding="utf-8")
++    print(f"Korean fonts: {len(faces)} subsets for {len(chars)} characters")
++
++
+ # Application files packed into app.zip, then extracted into the Pyodide file system
+ APP_FILES: list[str] = ["main.py", "config.ini", "VERSION"]
+ APP_DIRS: dict[str, tuple[str, ...]] = {
+@@ -197,6 +254,7 @@ def build(pyodide: str = "cdn") -> None:
+     wheels: list[str] = download_wheels()
+     copy_pyglet_bridge()
+     download_fonts()
++    copy_korean_fonts(KR_FONTS_LOCAL)
+     for module in PAGE_MODULES:
+         shutil.copy(WEB / module, DIST / module)
+     version: str = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+diff --git a/web/index.html b/web/index.html
+index ae1a68d..209966a 100644
+--- a/web/index.html
++++ b/web/index.html
+@@ -70,6 +70,17 @@
+             font-size: 1rem; line-height: 1; }
+         #pygletStatus { position: fixed; left: 16px; bottom: 12px; margin: 0; color: var(--muted);
+             font-size: 0.85rem; white-space: pre-wrap; pointer-events: none; }
++        /* Korean adaptation: participant page */
++        body.study #lang, body.study label[for="lang"], body.study #mode, body.study label[for="mode"],
++        body.study .hint[data-i18n="choose_next"], body.study label.inline:has(#fullscreen),
++        body.study .notice.info, body.study #back, body.study #end .subtitle,
++        body.study #end [data-i18n="kept_in_browser"] { display: none !important; }
++        #study h2 { font-size: 1.05rem; margin: 20px 0 4px; }
++        .lead { line-height: 1.6; }
++        .study-list { padding-left: 20px; line-height: 1.6; }
++        .study-buttons { display: flex; gap: 8px; align-items: center; }
++        .study-buttons button { margin-top: 8px; width: auto; flex: 1; }
++        #result-code { width: 100%; box-sizing: border-box; font: 12px ui-monospace, monospace; word-break: break-all; }
+     </style>
+ </head>
+ <body>
+@@ -78,10 +89,29 @@
+             <h1>OpenMATB <span class="version">v{{VERSION}}</span></h1>
+             <p class="subtitle">Julien.Cegarra@univ-jfc.fr</p>
+ 
++            <section id="study" hidden>
++                <p class="lead">다중과업 수행 연구에 참여해 주셔서 감사합니다. 약 <strong>20분</strong> 걸리며 중간에 멈출 수 없으니, 방해받지 않는 시간에 해 주세요.</p>
++                <ul class="study-list">
++                    <li><strong>PC</strong>(노트북 포함), <strong>마우스</strong>, 키보드, <strong>스피커나 이어폰</strong>이 필요합니다.</li>
++                    <li><strong>Chrome</strong> 또는 <strong>Edge</strong> 브라우저를 써 주세요.</li>
++                    <li>이 페이지는 이름이나 연락처를 묻지 않습니다. 끝에 나오는 <strong>결과 코드</strong>를 설문지에 붙여 넣는 방식으로 제출됩니다.</li>
++                    <li>언제든 창을 닫아 참여를 그만둘 수 있습니다.</li>
++                </ul>
++                <h2>소리 확인</h2>
++                <p class="hint">스피커나 이어폰을 켜고 아래 버튼을 누르세요. "에이 비 씨 하나 둘 삼…" 하는 한국어 음성이 들리면 정상입니다.</p>
++                <div class="study-buttons">
++                    <button id="sound-play" type="button" class="secondary">소리 재생</button>
++                    <button id="sound-ok" type="button" disabled>잘 들립니다</button>
++                </div>
++                <p id="sound-voice" class="hint"></p>
++                <label class="inline"><input id="agree" type="checkbox"> <span>위 내용을 읽었고 참여에 동의합니다.</span></label>
++            </section>
++
+             <label for="lang" data-i18n="language">Language</label>
+             <select id="lang">
+                 <option value="en_EN">English</option>
+                 <option value="fr_FR">Français</option>
++                <option value="ko_KR">한국어</option>
+             </select>
+ 
+             <label for="mode" data-i18n="mode">Mode</label>
+@@ -123,6 +153,13 @@
+             <h1 data-i18n="session_ended">Session ended</h1>
+             <p class="subtitle"><span data-i18n="log_file">The log file</span> <strong id="end-file"></strong></p>
+             <ul id="end-destinations" class="destinations" aria-live="polite"></ul>
++            <section id="study-end" hidden>
++                <p class="lead">아래 <strong>결과 코드 전체</strong>를 복사해 설문지의 "결과 코드" 칸에 붙여 넣어 주세요. 코드를 제출해야 참여가 완료됩니다.</p>
++                <textarea id="result-code" rows="5" readonly></textarea>
++                <div class="study-buttons"><button id="copy-code" type="button">코드 복사</button><span id="copied" class="hint"></span></div>
++                <p id="survey-line" class="lead"></p>
++                <p class="hint">설문 제출을 마칠 때까지 이 창을 닫지 마세요.</p>
++            </section>
+             <p class="hint" data-i18n="kept_in_browser">It is also kept in this browser for replay.</p>
+             <button id="back" data-i18n="back_to_menu">Back to menu</button>
+         </div>
+diff --git a/web/korean_tts.js b/web/korean_tts.js
+new file mode 100644
+index 0000000..e21cdab
+--- /dev/null
++++ b/web/korean_tts.js
+@@ -0,0 +1,62 @@
++// Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
++// Institut National Universitaire Champollion (Albi, France).
++// License : CeCILL, version 2.1 (see the LICENSE file)
++//
++// Korean adaptation (2026): Korean voice of the communications task, read by the browser speech synthesis.
++// Used by core/korean_tts.py (TTSPlayer) through window.KoreanTTS. Python polls isDone(id): the response time of a
++// prompt starts when its message has been spoken, as with the recorded voices.
++
++const supported = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
++let voice = null;
++let lastId = 0;
++const done = new Set();
++
++function pickVoice() {
++    if (!supported) {
++        return null;
++    }
++    const voices = speechSynthesis.getVoices().filter((v) => /^ko/i.test(v.lang));
++    // Prefer the natural voices (Google, Microsoft online), then any Korean voice
++    voice = voices.find((v) => /Google/i.test(v.name))
++        || voices.find((v) => /Natural|Online/i.test(v.name))
++        || voices.find((v) => /Microsoft/i.test(v.name))
++        || voices[0] || null;
++    return voice;
++}
++
++if (supported) {
++    pickVoice();
++    speechSynthesis.addEventListener?.("voiceschanged", pickVoice);
++}
++
++export const KoreanTTS = {
++    supported,
++    hasKoreanVoice: () => Boolean(voice || pickVoice()),
++    voiceName: () => (voice || pickVoice() || {}).name || "",
++    speak(text, rate = 1) {
++        const id = ++lastId;
++        if (!supported) {
++            done.add(id);
++            return id;
++        }
++        const utterance = new SpeechSynthesisUtterance(text);
++        utterance.lang = "ko-KR";
++        if (voice || pickVoice()) {
++            utterance.voice = voice;
++        }
++        utterance.rate = rate;
++        utterance.onend = utterance.onerror = () => done.add(id);
++        speechSynthesis.cancel();
++        speechSynthesis.speak(utterance);
++        // Safety: some voices never fire "end" (the prompt would never be over)
++        setTimeout(() => done.add(id), 4000 + text.length * 250);
++        return id;
++    },
++    isDone: (id) => done.has(id),
++    cancel() {
++        if (supported) {
++            speechSynthesis.cancel();
++        }
++    },
++};
++window.KoreanTTS = KoreanTTS;
+diff --git a/web/openmatb.js b/web/openmatb.js
+index e26ec0b..a6a29fa 100644
+--- a/web/openmatb.js
++++ b/web/openmatb.js
+@@ -15,6 +15,7 @@ import { connectScorm } from "./scorm.js";
+ import { Cmi5Session, cmi5LaunchParameters, preferredLanguage } from "./cmi5.js";
+ import { SerialTrigger, describePort } from "./serial_trigger.js";
+ import { LslBridge } from "./lsl_bridge.js";
++import { KoreanTTS } from "./korean_tts.js";
+ 
+ // Set by web/build.py: pyodide.mjs on the Pyodide CDN, or its copy shipped with the page (--pyodide local)
+ const PYODIDE_MODULE = new URL(document.querySelector('meta[name="pyodide-module"]').content, location.href).href;
+@@ -159,6 +160,36 @@ const TEXTS = {
+     },
+ };
+ 
++// Korean adaptation (2026): participant-facing texts of the start and end pages
++TEXTS.ko_KR = {
++    ...TEXTS.en_EN,
++    language: "언어",
++    mode: "모드",
++    run_scenario: "시나리오 실행",
++    replay_session: "세션 다시 보기",
++    choose_next: "시나리오(또는 세션)는 다음 화면에서 고릅니다.",
++    fullscreen: "전체 화면",
++    start: "시작",
++    session_ended: "과제가 끝났습니다",
++    log_file: "기록 파일",
++    kept_in_browser: "이 브라우저에도 보관됩니다.",
++    sending: "결과를 저장하는 중…",
++    sent_download: "이 컴퓨터에 내려받았습니다",
++    sent_fallback: "보내지 못해 이 컴퓨터에 내려받았습니다",
++    sent_datapipe: "연구자에게 전송했습니다",
++    sent_none: "결과 파일은 이 브라우저에만 보관됩니다",
++    not_sent: "{destination}에 보내지 못했습니다:",
++    back_to_menu: "처음 화면으로",
++    loading_python: "불러오는 중… (1/3)",
++    loading_pyglet: "불러오는 중… (2/3)",
++    loading_openmatb: "불러오는 중… (3/3)",
++    ready: "준비 완료",
++    loading_failed: "불러오기 실패:",
++    browser_warn: "Firefox는 시간 측정이 부정확합니다. Chrome이나 Edge로 열어 주세요.",
++    browser_block: "이 과제는 Chrome이나 Edge에서만 할 수 있습니다.",
++    config_error: "설정 오류:",
++};
++
+ // ?lang= in the URL, otherwise the first browser language OpenMATB is translated in, otherwise English
+ function detectLanguage() {
+     const requested = new URLSearchParams(location.search).get("lang");
+@@ -359,6 +390,83 @@ checkBrowser();
+ // ?demo=1 (Demo tab of the website): runs the demo scenario, and nothing is recorded
+ const DEMO = new URLSearchParams(location.search).get("demo") === "1";
+ const DEMO_SCENARIO = "demo.txt";
++
++// Korean adaptation (2026): participants open the page without parameters and get the study directly (Korean,
++// study scenario, sound check, result code at the end). ?admin=1 gives the original menu (other scenarios, replay).
++const QUERY = new URLSearchParams(location.search);
++const STUDY = !DEMO && QUERY.get("admin") !== "1" && !QUERY.get("cmi5") && !QUERY.get("endpoint");
++const STUDY_SCENARIO = "korean/study.txt";
++const SAMPLE_PROMPT = "에이 비 씨 하나 둘 삼, 에이 비 씨 하나 둘 삼. 무전기 컴 원, 주파수 하나 둘 여섯 점 오.";
++let soundChecked = false;
++
++function setupStudyPage() {
++    document.body.classList.add("study");
++    $("lang").value = "ko_KR";
++    translatePage();
++    $("study").hidden = false;
++    $("fullscreen").checked = true;
++    $("sound-play").addEventListener("click", () => {
++        const voice = KoreanTTS.voiceName();
++        $("sound-voice").textContent = !KoreanTTS.supported
++            ? "이 브라우저는 음성 기능이 없습니다. Chrome이나 Edge로 열어 주세요."
++            : voice ? `사용할 음성: ${voice}` : "한국어 음성을 찾지 못했습니다. Chrome이나 Edge로 열어 주세요.";
++        KoreanTTS.speak(SAMPLE_PROMPT);
++        $("sound-ok").disabled = false;
++    });
++    const showStart = () => {
++        $("start").hidden = !(soundChecked && $("agree").checked);
++    };
++    $("sound-ok").addEventListener("click", () => {
++        soundChecked = true;
++        $("sound-ok").textContent = "확인했습니다";
++        $("sound-ok").disabled = true;
++        showStart();
++    });
++    $("agree").addEventListener("change", showStart);
++    $("start").hidden = true;
++}
++if (STUDY) {
++    setupStudyPage();
++}
++
++// End of a study session: summary scores (core/korean_score.py) as a result code to paste in the survey.
++// The survey address comes from ?form= in the page address or web_survey_url in config.ini.
++async function showStudyResult(pyodide, sessionPath) {
++    $("study-end").hidden = false;
++    let code;
++    try {
++        pyodide.globals.set("_session_path", sessionPath);
++        code = pyodide.runPython(`
++from pathlib import Path
++from core.korean_score import result_code, score_file
++result_code(score_file(_session_path, Path("${APP_DIR}/includes/scenarios/korean/study.txt")))`);
++    } catch (error) {
++        console.error(error);
++        code = "OM1-ERROR " + String(error.message || error).slice(-200);
++    }
++    $("result-code").value = code;
++    $("copy-code").onclick = async () => {
++        try {
++            await navigator.clipboard.writeText(code);
++        } catch {
++            $("result-code").select();
++            document.execCommand("copy");
++        }
++        $("copied").textContent = "복사했습니다";
++    };
++    const survey = QUERY.get("form") || readConfigValue(readAppConfig(pyodide), "web_survey_url") || "";
++    $("survey-line").innerHTML = "";
++    if (/^https:\/\//.test(survey)) {
++        const link = document.createElement("a");
++        link.href = survey;
++        link.target = "_blank";
++        link.rel = "noopener";
++        link.textContent = "설문지 열기 (새 창)";
++        $("survey-line").append(link);
++    } else {
++        $("survey-line").textContent = "안내받은 설문지 링크로 이동해 주세요.";
++    }
++}
+ // config.ini values of the demo: no session number to acknowledge, and the session is not sent anywhere
+ const DEMO_CONFIG = { display_session_number: "False", web_session_output: "none" };
+ 
+@@ -427,10 +535,23 @@ async function returnToCourse() {
+ }
+ 
+ async function loadFonts() {
+-    // pyglet measures and renders text with the fonts known by the document
+-    for (const weight of FONT_WEIGHTS) {
+-        const face = new FontFace(FONT_FAMILY, `url(fonts/noto-sans-${weight}.woff2)`, { weight: String(weight) });
+-        document.fonts.add(await face.load());
++    // pyglet measures and renders text with the fonts known by the document.
++    // Korean adaptation: the Latin face is limited to its range and Noto Sans KR subsets (fonts/korean.json, written
++    // by web/build.py) cover the Hangul of the Korean texts, under the same family name.
++    let korean = null;
++    try {
++        korean = await (await fetch("fonts/korean.json")).json();
++    } catch (error) {
++        console.warn("No Korean fonts:", error);
++    }
++    const faces = FONT_WEIGHTS.map((weight) => new FontFace(FONT_FAMILY, `url(fonts/noto-sans-${weight}.woff2)`,
++        { weight: String(weight), ...(korean ? { unicodeRange: korean.latin } : {}) }));
++    for (const face of korean?.faces || []) {
++        faces.push(new FontFace(FONT_FAMILY, `url(fonts/${face.file})`,
++            { weight: String(face.weight), unicodeRange: face.range }));
++    }
++    for (const face of await Promise.all(faces.map((f) => f.load()))) {
++        document.fonts.add(face);
+     }
+ }
+ 
+@@ -639,6 +760,9 @@ $("start").addEventListener("click", async () => {
+     if (DEMO && !params.has("scenario")) {
+         params.set("scenario", DEMO_SCENARIO);
+     }
++    if (STUDY) {
++        params.set("scenario", STUDY_SCENARIO);
++    }
+     history.replaceState(null, "", `?${params}`);
+ 
+     const file = $("mode").value === "replay" ? $("session-file").files[0] : undefined;
+@@ -751,6 +875,9 @@ document.addEventListener("openmatb-end", async (event) => {
+         document.querySelector('#end [data-i18n="kept_in_browser"]').hidden = true;
+         return;
+     }
++    if (STUDY) {
++        await showStudyResult(pyodide, event.detail);
++    }
+     const output = sessionOutput || new SessionOutput(sessionOutputSettings(""));
+     const results = await output.finish(relativePath, readSessionFile(pyodide, event.detail));
+     results.push(...await closeDevices());

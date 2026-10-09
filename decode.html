@@ -7,9 +7,11 @@
 <style>
   body { margin: 0; background: #f4f5f7; color: #1d2330; font-family: "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif; }
   main { max-width: 980px; margin: 32px auto; padding: 24px 28px; background: #fff; border: 1px solid #d5d9e0; border-radius: 12px; }
+  @media (max-width: 700px) { main { margin: 0; border-radius: 0; padding: 16px; } }
   h1 { font-size: 20px; margin-top: 0; }
   textarea { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; font-size: 12px; padding: 10px; border: 1px solid #d5d9e0; border-radius: 8px; }
   button { font: inherit; padding: 8px 18px; border: 0; border-radius: 8px; background: #2457c5; color: #fff; cursor: pointer; margin-right: 8px; }
+  button:disabled { background: #9aa6bd; cursor: default; }
   p, li { font-size: 14px; line-height: 1.6; }
   .muted { color: #5d6675; font-size: 13px; }
   #summary { margin: 12px 0; font-size: 14px; }
@@ -18,59 +20,57 @@
 <body>
 <main>
   <h1>결과 코드 → 표(CSV) 변환기</h1>
-  <p>구글 시트의 <b>결과 코드 열 전체</b>를 복사해 아래에 붙여 넣으세요(한 줄에 코드 하나). 변환 결과는 CSV로 내려받아 엑셀이나 JASP에서 바로 열 수 있습니다.</p>
-  <p class="muted">이 페이지도 데이터를 어디에도 보내지 않습니다. 모든 처리는 이 브라우저 안에서만 일어납니다.</p>
-  <textarea id="in" rows="10" placeholder="MT1-eyJk..."></textarea>
+  <p>구글 시트의 <b>결과 코드 열 전체</b>를 복사해 아래에 붙여 넣으세요(한 줄에 코드 하나). 변환 결과는 CSV로 내려받아 엑셀, JASP, R에서 바로 열 수 있습니다. 행 순서는 붙여 넣은 순서와 같으므로 설문 응답과 그대로 나란히 붙이면 됩니다.</p>
+  <p class="muted">이 페이지는 데이터를 어디에도 보내지 않습니다. 모든 처리는 이 브라우저 안에서만 일어납니다.</p>
+  <textarea id="in" rows="10" placeholder="OM1-eyJq..."></textarea>
   <p><button id="go">변환</button><button id="dl" disabled>CSV 내려받기</button></p>
   <div id="summary"></div>
   <textarea id="out" rows="12" readonly></textarea>
   <h2 style="font-size:16px">열 설명</h2>
   <ul>
-    <li><b>valid</b>: 1이면 코드가 손상·수정되지 않음, 0이면 제외 권장</li>
-    <li><b>A_trk</b>: 과제 A 추적 오차(낮을수록 정확). 화면 대비 % 단위 RMSE</li>
-    <li><b>B_trk</b>: 과제 B 중 추적 오차</li>
-    <li><b>B_smN / B_smHit / B_smMiss / B_smRT / B_smFA</b>: 자동화가 놓친 시스템 이상의 개수 / 처리 / 놓침 / 평균 반응시간(초) / 이상 없는데 누른 횟수</li>
-    <li><b>B_cmN / B_cmHit / B_cmMiss / B_cmWrong / B_cmRT / B_cmFA</b>: 내 호출부호 교신 수 / 정답 / 놓침 / 채널 틀림 / 평균 반응시간 / 남의 호출에 반응</li>
-    <li><b>B_rmAll</b>: 네 탱크가 모두 범위 안에 있던 시간 비율(%) · <b>B_rmAvg</b>: 탱크별 범위 내 시간 비율의 평균(%) · <b>B_rmA~D</b>: 탱크별 비율</li>
-    <li><b>B_attn</b>: 주의 확인 통과(1) / 실패(0). 0이면 제외 권장</li>
-    <li><b>tts</b>: 1이면 교신을 음성으로, 0이면 글자로 받음(소리가 안 나서 대체). 두 조건은 섞어 분석하지 말 것 · <b>voice</b>: 사용된 음성 이름</li>
-    <li><b>away</b>: 과제 중 다른 탭으로 이동한 횟수. 1 이상이면 검토</li>
-    <li><b>fast</b>: 1이면 점검용 단축 모드로 응답한 것이므로 제외</li>
+    <li><b>valid</b>: 1이면 코드가 손상·수정되지 않음. 0이면 제외 권장 · <b>session</b>: 기록 파일 이름(날짜·시각, 중복 확인용)</li>
+    <li><b>A_trk_in / A_trk_rms</b>: 과업 1(추적 단독, 본 측정 120초)에서 커서가 원 안에 있던 비율(%) / 중심과의 거리 RMS(픽셀, 낮을수록 정확)</li>
+    <li><b>B_trk_in / B_trk_rms</b>: 과업 2(네 과업 동시, 10분) 중 추적의 같은 지표</li>
+    <li><b>B_sm_hit / B_sm_auto / B_sm_miss / B_sm_fa / B_sm_rt</b>: 시스템 감시. 참가자가 직접 처리한 이상 / 자동 장치가 처리한 이상 / 10초 안에 처리하지 못한 이상 / 이상이 없는데 누른 횟수 / 직접 처리의 평균 반응시간(ms)</li>
+    <li><b>B_cm_hit / miss / fa / bad_radio / bad_freq / bad_radio_freq / B_cm_rt</b>: 교신. 내 호출부호 정답 / 무응답 / 남의 호출에 응답 / 무전기 틀림 / 주파수 틀림 / 둘 다 틀림 / 정답의 평균 반응시간(ms, 음성이 끝난 뒤부터)</li>
+    <li><b>B_rm_a / B_rm_b / B_rm</b>: 연료 관리. 탱크 A, B가 목표 범위 안에 있던 시간 비율(%)과 그 평균</li>
+    <li><b>hidden</b>: 과업 중 다른 탭·창으로 나간 횟수(1 이상이면 검토) · <b>freeze_ms</b>: 브라우저가 멈춘 시간 합계(ms, 수천 ms 이상이면 검토)</li>
+    <li><b>browser / voice / win_h</b>: 브라우저, 사용된 한국어 음성, 창 높이(픽셀). voice가 비어 있으면 음성이 안 나왔을 수 있으므로 제외 검토</li>
   </ul>
 </main>
 <script>
 "use strict";
 function fnv1a(str) { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); } return (h >>> 0).toString(36); }
-const COLS = ["id","ver","valid","start","end","scr_w","scr_h","fast","away","tts","voice","A_trk","A_moved",
-  "B_trk","B_moved","B_smN","B_smHit","B_smMiss","B_smRT","B_smFA","B_smAutoN",
-  "B_cmN","B_cmHit","B_cmMiss","B_cmWrong","B_cmRT","B_cmFA","B_rmAll","B_rmAvg","B_rmA","B_rmB","B_rmC","B_rmD","B_rmPress","B_attn"];
+const COLS = ["valid", "session", "browser", "voice", "win_h", "hidden", "freeze_ms",
+  "A_trk_in", "A_trk_rms", "B_trk_in", "B_trk_rms",
+  "B_sm_hit", "B_sm_auto", "B_sm_miss", "B_sm_fa", "B_sm_rt",
+  "B_cm_hit", "B_cm_miss", "B_cm_fa", "B_cm_bad_radio", "B_cm_bad_freq", "B_cm_bad_radio_freq", "B_cm_rt",
+  "B_rm_a", "B_rm_b", "B_rm"];
+const cell = v => v == null ? "" : /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
 let csv = "";
 document.getElementById("go").onclick = () => {
   const lines = document.getElementById("in").value.split(/\s+/).map(s => s.trim()).filter(Boolean);
-  const rows = [COLS.join(",")]; let ok = 0, bad = 0, seen = new Set(), dup = 0;
+  const rows = [COLS.join(",")]; let ok = 0, bad = 0, dup = 0; const seen = new Set();
   for (const line of lines) {
-    const m = line.match(/^MT(\d+)-(.+)$/);
-    if (!m) { bad++; continue; }
+    const m = line.match(/^OM1-(.+)$/);
+    let d = {}, valid = 0;
     try {
-      const payload = JSON.parse(decodeURIComponent(escape(atob(m[2]))));
-      const d = payload.d, valid = fnv1a(JSON.stringify(d)) === payload.c ? 1 : 0;
-      if (seen.has(d.id)) dup++; seen.add(d.id);
-      const A = d.A || {}, B = d.B || {};
-      const vals = [d.id, m[1], valid, d.start, d.end, (d.scr||[])[0], (d.scr||[])[1], d.fast, d.away, d.tts, d.vo, A.trk, A.moved,
-        B.trk, B.moved, B.smN, B.smHit, B.smMiss, B.smRT, B.smFA, B.smAutoN,
-        B.cmN, B.cmHit, B.cmMiss, B.cmWrong, B.cmRT, B.cmFA, B.rmAll, B.rmAvg, B.rmA, B.rmB, B.rmC, B.rmD, B.rmPress, B.attn];
-      rows.push(vals.map(v => v == null ? "" : /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : v).join(","));
-      valid ? ok++ : bad++;
-    } catch { bad++; }
+      const payload = JSON.parse(atob(m[1]));
+      d = JSON.parse(payload.j);
+      valid = fnv1a(payload.j) === payload.c ? 1 : 0;
+    } catch { d = {}; valid = 0; }
+    if (d.file) { if (seen.has(d.file)) dup++; seen.add(d.file); }
+    rows.push(COLS.map(c => cell(c === "valid" ? valid : c === "session" ? d.file : d[c])).join(","));
+    valid ? ok++ : bad++;
   }
   csv = rows.join("\n");
   document.getElementById("out").value = csv;
-  document.getElementById("summary").textContent = `정상 ${ok}건 · 손상/수정 의심 ${bad}건 · 중복 참가번호 ${dup}건`;
+  document.getElementById("summary").textContent = `정상 ${ok}건 · 손상/수정 의심 ${bad}건 · 같은 기록 중복 ${dup}건`;
   document.getElementById("dl").disabled = rows.length < 2;
 };
 document.getElementById("dl").onclick = () => {
   const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "matb_results.csv"; a.click();
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "openmatb_results.csv"; a.click();
 };
 </script>
 </body>

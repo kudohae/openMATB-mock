@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>다중과업 수행 연구</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --ink: #1d2330; --muted: #5d6675; --line: #d5d9e0;
+    --accent: #2457c5; --ok: #1f9d55; --bad: #d64545; --warn: #d9911a; --track-bg: #eef1f6;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif; }
+  .screen { max-width: 760px; margin: 40px auto; padding: 32px 36px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 12px; line-height: 1.7; }
+  .screen h1 { font-size: 22px; margin: 0 0 16px; }
+  .screen h2 { font-size: 18px; margin: 24px 0 8px; }
+  .screen p, .screen li { font-size: 15px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  button { font: inherit; font-size: 15px; padding: 10px 22px; border-radius: 8px; border: 0;
+    background: var(--accent); color: #fff; cursor: pointer; }
+  button:disabled { background: #9aa6bd; cursor: not-allowed; }
+  .row { display: flex; gap: 12px; align-items: center; margin-top: 20px; }
+  kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px solid #b8bfcc; border-bottom-width: 2px;
+    border-radius: 4px; background: #fafbfc; color: #1d2330; font-family: ui-monospace, monospace; font-size: 13px; text-align: center; }
+  .keytable { border-collapse: collapse; margin: 8px 0; font-size: 14px; }
+  .keytable td { border: 1px solid var(--line); padding: 6px 10px; vertical-align: top; }
+  #blocker { display: none; }
+  /* task area */
+  #task { display: none; position: fixed; inset: 0; background: var(--bg); }
+  #hud { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); font-size: 14px; color: var(--muted); }
+  #arena { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: 1000px; height: 640px; display: grid; gap: 10px; }
+  #arena.single { grid-template-columns: 1fr; grid-template-rows: 1fr; width: 640px; height: 520px; }
+  #arena.multi { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+    position: relative; overflow: hidden; }
+  .panel h3 { margin: 0 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; letter-spacing: .02em; }
+  .legend { position: absolute; bottom: 6px; right: 10px; font-size: 12px; color: var(--muted); }
+  canvas { display: block; background: var(--track-bg); border-radius: 6px; cursor: crosshair; }
+  /* sysmon */
+  .lights { display: flex; gap: 14px; margin: 4px 0 10px; }
+  .light { width: 92px; height: 34px; border-radius: 6px; border: 1px solid var(--line); display: flex;
+    align-items: center; justify-content: center; font-size: 12px; color: #fff; background: #b9bfc9; }
+  .scales { display: flex; gap: 18px; }
+  .scale { width: 42px; height: 170px; border: 1px solid var(--line); border-radius: 6px; position: relative;
+    background: linear-gradient(to bottom, #fbe9e9 0 22%, #f5f7fa 22% 78%, #fbe9e9 78% 100%); }
+  .scale .ptr { position: absolute; left: 4px; right: 4px; height: 10px; border-radius: 3px; background: var(--ink); }
+  .scale .lab { position: absolute; bottom: -20px; width: 100%; text-align: center; font-size: 12px; color: var(--muted); }
+  .auto { position: absolute; top: 10px; right: 12px; font-size: 12px; padding: 2px 8px; border-radius: 10px;
+    background: #e6efff; color: var(--accent); }
+  .flash { position: absolute; top: 34px; right: 12px; font-size: 12px; color: var(--ok); opacity: 0; transition: opacity .2s; }
+  /* comm */
+  #commBox { margin-top: 8px; min-height: 92px; padding: 14px; border-radius: 8px; background: #f7f8fb;
+    border: 1px dashed var(--line); font-size: 17px; }
+  #commBox.active { background: #fff8e8; border-color: var(--warn); border-style: solid; }
+  #commBox.voice { display: flex; align-items: center; justify-content: center; color: var(--muted); }
+  #commBox.voice.active { color: var(--warn); font-weight: 700; }
+  .callsign { font-weight: 700; }
+  .channels { display: flex; gap: 10px; margin-top: 12px; }
+  .ch { flex: 1; padding: 8px 0; text-align: center; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; }
+  .ch.sel { background: #e6efff; border-color: var(--accent); color: var(--accent); font-weight: 700; }
+  /* resman */
+  .tanks { display: flex; gap: 22px; align-items: flex-end; margin-top: 4px; justify-content: center; }
+  .tank { width: 78px; height: 170px; border: 1px solid #8a93a3; border-radius: 6px; position: relative; overflow: hidden; background: #fafbfc; }
+  .tank .fuel { position: absolute; left: 0; right: 0; bottom: 0; background: #7fb2ff; }
+  .tank .band { position: absolute; left: 0; right: 0; z-index: 2; border-top: 2px dashed var(--ok); border-bottom: 2px dashed var(--ok);
+    background: rgba(31,157,85,.08); }
+  .tank .val { position: absolute; z-index: 3; top: 4px; width: 100%; text-align: center; font-size: 12px; color: var(--muted); }
+  .tankname { text-align: center; font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .pump { margin-top: 6px; padding: 6px 0; border-radius: 6px; text-align: center; font-size: 12px; border: 1px solid var(--line); background: #f2f3f6; }
+  .pump.on { background: var(--ok); color: #fff; border-color: var(--ok); }
+  .pump.fail { background: var(--bad); color: #fff; border-color: var(--bad); }
+  #code { width: 100%; font-family: ui-monospace, monospace; font-size: 12px; padding: 10px; border-radius: 8px;
+    border: 1px solid var(--line); word-break: break-all; background: #fafbfc; }
+  .countdown { font-size: 44px; text-align: center; margin: 40px 0; }
+</style>
+</head>
+<body>
+
+<div id="blocker" class="screen">
+  <h1>PC에서 참여해 주세요</h1>
+  <p>이 과제는 마우스와 키보드가 필요합니다. 휴대폰이나 태블릿에서는 진행할 수 없습니다.</p>
+  <p>PC(노트북 포함) 브라우저 창을 가로 1,050px 이상으로 넓힌 뒤 새로고침해 주세요.</p>
+  <p class="muted" id="sizeInfo"></p>
+</div>
+
+<div id="screens"></div>
+
+<div id="task">
+  <div id="hud"></div>
+  <div id="arena"></div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================
+   다중과업 수행 연구용 웹 과제 (MATB 구조를 본뜬 간이판)
+   - 과제 A: 단일 추적(마우스)
+   - 과제 B: 추적 + 시스템 감시(자동화 감독) + 교신 + 연료 관리
+   모든 참가자는 고정된 사건 일정(seed)으로 같은 조건을 받는다.
+   서버로 아무 데이터도 보내지 않는다. 결과는 화면의 결과 코드로만 전달된다.
+   ============================================================ */
+
+const VERSION = 2;
+const params = new URLSearchParams(location.search);
+const FAST = params.get("fast") === "1";         // 개발 점검용: 시간 1/10
+const T = s => FAST ? s / 10 : s;
+
+const DUR = {
+  A_PRACTICE: T(15), A_MAIN: T(90),
+  B_PRACTICE: T(60), B_MAIN: T(300),
+};
+
+// 연료 관리: 탱크 4개, 탱크마다 펌프 1개. 탱크마다 소모 속도를 달리해 켜고 끄는 시점이 겹치지 않게 한다.
+const TANKS = ["A", "B", "C", "D"];
+const PUMP_KEYS = ["Z", "X", "C", "V"];
+const DRAIN = { A: 8, B: 10, C: 12, D: 9 };       // 초당 소모량
+const PUMP_FLOW = 20;                              // 펌프 1개 초당 공급량
+const FUEL_SPEED = 4;                              // 전체 속도 배율
+const FUEL_START = { A: 2700, B: 2400, C: 2600, D: 2300 };
+
+// 교신 음성(TTS). 호출부호와 채널을 한국어로 읽는다.
+const CALL_SAY = { "BLUE-1": "블루 원", "RED-3": "레드 쓰리", "BLUE-7": "블루 세븐", "EAGLE-2": "이글 투", "BLUE-11": "블루 일레븐" };
+const CH_SAY = { A: "에이", S: "에스", D: "디", F: "에프" };
+const tts = { on: false, voice: null, supported: "speechSynthesis" in window };
+function pickVoice() {
+  if (!tts.supported) return null;
+  const vs = speechSynthesis.getVoices();
+  return vs.find(v => /^ko/i.test(v.lang) && /Google|Microsoft|Yuna/i.test(v.name)) || vs.find(v => /^ko/i.test(v.lang)) || null;
+}
+if (tts.supported) speechSynthesis.onvoiceschanged = () => { tts.voice = pickVoice() || tts.voice; };
+function say(text, onstart) {
+  if (!tts.supported) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "ko-KR"; u.rate = 1.05; if (tts.voice) u.voice = tts.voice;
+  if (onstart) u.onstart = onstart;
+  speechSynthesis.cancel(); speechSynthesis.speak(u);
+}
+function commSpeech(ev) {
+  if (ev.attn) return "확인 메시지입니다. 이 말을 들었다면 키보드 피를 누르세요.";
+  const c = CALL_SAY[ev.call] || ev.call;
+  return `${c}, ${c}. 채널 ${CH_SAY[ev.ch]}로 전환하라.`;
+}
+
+// ---------- 기기 확인 ----------
+const isTouchOnly = matchMedia("(pointer: coarse)").matches && !matchMedia("(pointer: fine)").matches;
+function sizeOk() { return window.innerWidth >= 1050 && window.innerHeight >= 680; }
+if (isTouchOnly || (!sizeOk() && !FAST)) {
+  document.getElementById("blocker").style.display = "block";
+  document.getElementById("sizeInfo").textContent =
+    `현재 창 크기: ${window.innerWidth} × ${window.innerHeight}px` + (isTouchOnly ? " (터치 기기)" : "");
+  window.addEventListener("resize", () => { if (sizeOk() && !isTouchOnly) location.reload(); });
+  throw new Error("blocked");
+}
+
+// ---------- 공통 유틸 ----------
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a);
+  t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function fnv1a(str) { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); } return (h >>> 0).toString(36); }
+function mean(a) { return a.length ? a.reduce((x, y) => x + y, 0) / a.length : null; }
+function r2(x) { return x == null ? null : Math.round(x * 100) / 100; }
+const $ = (sel, root = document) => root.querySelector(sel);
+function el(tag, attrs = {}, html = "") { const e = document.createElement(tag); Object.assign(e, attrs); if (html) e.innerHTML = html; return e; }
+
+const session = {
+  id: Math.random().toString(36).slice(2, 8).toUpperCase(),
+  start: new Date().toISOString(),
+  screen: [window.innerWidth, window.innerHeight],
+  tabAway: 0,
+};
+let running = false;
+document.addEventListener("visibilitychange", () => { if (document.hidden && running) session.tabAway++; });
+
+// ---------- 화면(안내) ----------
+const screens = $("#screens");
+function showScreen(html, buttonLabel = "다음", onNext, opts = {}) {
+  screens.innerHTML = "";
+  const s = el("div", { className: "screen" }, html);
+  const row = el("div", { className: "row" });
+  const btn = el("button", { textContent: buttonLabel });
+  row.appendChild(btn); s.appendChild(row); screens.appendChild(s);
+  if (opts.requireCheck) {
+    const cb = $(opts.requireCheck, s); btn.disabled = true;
+    cb.addEventListener("change", () => btn.disabled = !cb.checked);
+  }
+  btn.addEventListener("click", () => { screens.innerHTML = ""; onNext(); });
+  window.scrollTo(0, 0);
+}
+function countdown(next) {
+  screens.innerHTML = "";
+  const s = el("div", { className: "screen" }); const c = el("div", { className: "countdown" });
+  s.appendChild(c); screens.appendChild(s);
+  let n = FAST ? 1 : 3; c.textContent = n;
+  const iv = setInterval(() => { n--; if (n <= 0) { clearInterval(iv); screens.innerHTML = ""; next(); } else c.textContent = n; }, 1000);
+}
+
+// ---------- 추적(TRACK) ----------
+function targetPos(t) { // 0~1 정규화 좌표, 모든 참가자 동일
+  const x = 0.5 + 0.20 * Math.sin(0.83 * t) + 0.12 * Math.sin(1.71 * t + 1.1) + 0.06 * Math.sin(2.93 * t + 2.3);
+  const y = 0.5 + 0.19 * Math.sin(0.67 * t + 0.4) + 0.12 * Math.sin(1.53 * t + 2.0) + 0.06 * Math.sin(3.37 * t + 0.7);
+  return [x, y];
+}
+function makeTracker(canvas) {
+  const ctx = canvas.getContext("2d");
+  let mx = 0.5, my = 0.5, moved = 0;
+  canvas.addEventListener("mousemove", e => {
+    const r = canvas.getBoundingClientRect();
+    const nx = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+    const ny = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+    moved += Math.hypot(nx - mx, ny - my); mx = nx; my = ny;
+  });
+  const sq = []; // 오차 제곱 (시간 가중)
+  let wsum = 0, esum = 0;
+  return {
+    step(t, dt, record) {
+      const [tx, ty] = targetPos(t);
+      const err = Math.hypot(tx - mx, ty - my);
+      if (record) { esum += err * err * dt; wsum += dt; }
+      const W = canvas.width, H = canvas.height;
+      ctx.clearRect(0, 0, W, H);
+      ctx.strokeStyle = "#c9d1de"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.moveTo(0, H / 2); ctx.lineTo(W, H / 2); ctx.stroke();
+      ctx.fillStyle = "rgba(36,87,197,.18)"; ctx.beginPath(); ctx.arc(tx * W, ty * H, W * 0.06, 0, 2 * Math.PI); ctx.fill();
+      ctx.fillStyle = "#2457c5"; ctx.beginPath(); ctx.arc(tx * W, ty * H, 6, 0, 2 * Math.PI); ctx.fill();
+      ctx.strokeStyle = "#1d2330"; ctx.lineWidth = 2;
+      const cx = mx * W, cy = my * H;
+      ctx.beginPath(); ctx.moveTo(cx - 9, cy); ctx.lineTo(cx + 9, cy); ctx.moveTo(cx, cy - 9); ctx.lineTo(cx, cy + 9); ctx.stroke();
+    },
+    result() { return { rmse: wsum ? Math.sqrt(esum / wsum) * 100 : null, moved: moved }; },
+  };
+}
+
+// ---------- 사건 일정 (고정 seed) ----------
+function buildSchedule(duration, seed, density) {
+  const rnd = mulberry32(seed);
+  const sys = [], comm = [], pumpFail = [];
+  // 시스템 감시 고장: 평균 12초 간격 (density로 조절)
+  let t = 4;
+  const gauges = ["S1", "S2", "S3", "S4", "G", "R"];
+  while (t < duration - 6) {
+    sys.push({ t, gauge: gauges[Math.floor(rnd() * gauges.length)], dir: rnd() < 0.5 ? -1 : 1, auto: rnd() < 0.55 });
+    t += (9 + rnd() * 6) / density;
+  }
+  // 교신: 평균 20초 간격, 약 55%가 본인 호출부호
+  t = 8;
+  const others = ["RED-3", "BLUE-7", "EAGLE-2", "BLUE-11"];
+  const chs = ["A", "S", "D", "F"];
+  while (t < duration - 8) {
+    const own = rnd() < 0.55;
+    comm.push({ t, own, call: own ? "BLUE-1" : others[Math.floor(rnd() * others.length)], ch: chs[Math.floor(rnd() * 4)] });
+    t += (16 + rnd() * 8) / density;
+  }
+  // 주의 확인 메시지 1개 (본 과제에서만)
+  if (density === 1) {
+    const at = duration * 0.55;
+    comm.push({ t: at, attn: true });
+    comm.sort((a, b) => a.t - b.t);
+    // 주의 확인 앞뒤 10초 안의 교신은 제거해 겹치지 않게 한다
+    for (let i = comm.length - 1; i >= 0; i--) if (!comm[i].attn && Math.abs(comm[i].t - at) < 10) comm.splice(i, 1);
+  }
+  // 펌프 고장
+  const pumps = ["P1", "P2", "P3", "P4"];
+  t = 30;
+  while (t < duration - 25) { pumpFail.push({ t, pump: pumps[Math.floor(rnd() * 4)], len: 12 }); t += (55 + rnd() * 25) / density; }
+  return { sys, comm, pumpFail };
+}
+
+// ---------- 과제 실행기 ----------
+function runTask({ mode, duration, schedule, record, onDone }) {
+  running = true;
+  const task = $("#task"), arena = $("#arena"), hud = $("#hud");
+  task.style.display = "block"; arena.innerHTML = ""; arena.className = mode;
+
+  // 패널 구성
+  let trackCanvas;
+  if (mode === "single") {
+    const p = el("div", { className: "panel" }, "<h3>추적: 십자 표시를 파란 원 안에 계속 두세요</h3>");
+    trackCanvas = el("canvas", { width: 612, height: 470 }); p.appendChild(trackCanvas); arena.appendChild(p);
+  } else {
+    arena.appendChild(el("div", { className: "panel", id: "pSys" }, `
+      <h3>시스템 감시</h3><span class="auto">자동 감시 ON</span><span class="flash" id="autoFlash">자동 처리됨</span>
+      <div class="lights"><div class="light" id="gG">정상등</div><div class="light" id="gR">경고등</div></div>
+      <div class="scales">${[1, 2, 3, 4].map(i => `<div class="scale" id="gS${i}"><div class="ptr"></div><div class="lab">${i}</div></div>`).join("")}</div>
+      <div class="legend">이상 처리: 계기 <kbd>1</kbd>~<kbd>4</kbd> · 정상등 <kbd>5</kbd> · 경고등 <kbd>6</kbd></div>`));
+    const pt = el("div", { className: "panel" }, "<h3>추적 (마우스)</h3>");
+    trackCanvas = el("canvas", { width: 466, height: 270 }); pt.appendChild(trackCanvas); arena.appendChild(pt);
+    arena.appendChild(el("div", { className: "panel" }, `
+      <h3>교신${tts.on ? " (음성)" : ""} · 내 호출부호: <b>BLUE-1</b></h3>
+      <div id="commBox" class="${tts.on ? "voice" : ""}">${tts.on ? "수신 대기" : "대기 중"}</div>
+      <div class="channels">${["A", "S", "D", "F"].map(c => `<div class="ch" id="ch${c}">채널 ${c}</div>`).join("")}</div>
+      <div class="legend">내 호출부호일 때만: <kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd></div>`));
+    arena.appendChild(el("div", { className: "panel" }, `
+      <h3>연료 관리: 네 탱크를 모두 초록 점선 범위 안에 유지</h3>
+      <div class="tanks">${TANKS.map((k, i) => `<div>
+        <div class="tank" id="t${k}"><div class="band"></div><div class="fuel"></div><div class="val"></div></div>
+        <div class="tankname">탱크 ${k}</div>
+        <div class="pump" id="P${i + 1}">펌프 <kbd>${PUMP_KEYS[i]}</kbd></div></div>`).join("")}</div>
+      <div class="legend">누를 때마다 펌프 켜기/끄기</div>`));
+  }
+  const tracker = makeTracker(trackCanvas);
+
+  // ---- 상태 ----
+  const S = {
+    sysActive: {},           // gauge -> {ev, start}
+    sysHits: 0, sysMiss: 0, sysRT: [], sysFA: 0, sysManualTotal: 0, sysAutoTotal: 0,
+    commCur: null, commHits: 0, commMiss: 0, commRT: [], commFA: 0, commWrongCh: 0, commOwnTotal: 0,
+    attnShown: false, attnPass: null,
+    tanks: { ...FUEL_START }, pumps: { P1: false, P2: false, P3: false, P4: false }, pumpFailUntil: {},
+    inBandAll: 0, inBand: { A: 0, B: 0, C: 0, D: 0 }, rmTime: 0, pumpPresses: 0,
+  };
+  let sysIdx = 0, commIdx = 0, pfIdx = 0;
+  const sysJitter = { S1: 0, S2: 0, S3: 0, S4: 0 };
+
+  function sysPointer(id, offset) { // offset: -1(위 이상) ~ 1(아래 이상), 0 근처 정상
+    const ptr = $(`#g${id} .ptr`); if (!ptr) return;
+    const pos = 0.5 + offset * 0.38; ptr.style.top = `calc(${pos * 100}% - 5px)`;
+  }
+  function setLight(g, faulty) {
+    const e = $(`#g${g}`); if (!e) return;
+    if (g === "G") e.style.background = faulty ? "#b9bfc9" : "#1f9d55";
+    else e.style.background = faulty ? "#d64545" : "#b9bfc9";
+  }
+  if (mode === "multi") { setLight("G", false); setLight("R", false); }
+
+  function flashAuto() { const f = $("#autoFlash"); if (!f) return; f.style.opacity = 1; setTimeout(() => f.style.opacity = 0, 700); }
+
+  // ---- 키 입력 (한글 입력 상태에서도 동작하도록 e.code 사용) ----
+  const keyMap = { Digit1: "S1", Digit2: "S2", Digit3: "S3", Digit4: "S4", Digit5: "G", Digit6: "R",
+    Numpad1: "S1", Numpad2: "S2", Numpad3: "S3", Numpad4: "S4", Numpad5: "G", Numpad6: "R" };
+  const chMap = { KeyA: "A", KeyS: "S", KeyD: "D", KeyF: "F" };
+  const pumpMap = { KeyZ: "P1", KeyX: "P2", KeyC: "P3", KeyV: "P4" };
+  let now = 0;
+  function onKey(e) {
+    if (e.repeat || mode !== "multi") return;
+    if (keyMap[e.code]) {
+      const g = keyMap[e.code], a = S.sysActive[g];
+      if (a) {
+        if (record && !a.ev.auto) { S.sysHits++; S.sysRT.push(now - a.start); }
+        delete S.sysActive[g]; resetGauge(g);
+      } else if (record) S.sysFA++;
+      e.preventDefault();
+    } else if (chMap[e.code]) {
+      const ch = chMap[e.code];
+      document.querySelectorAll(".ch").forEach(x => x.classList.toggle("sel", x.id === "ch" + ch));
+      const c = S.commCur;
+      if (c && c.ev.own && !c.answered) {
+        c.answered = true;
+        if (record) { if (ch === c.ev.ch) { S.commHits++; S.commRT.push(now - c.start); } else S.commWrongCh++; }
+      } else if (record) S.commFA++;
+      e.preventDefault();
+    } else if (pumpMap[e.code]) {
+      const p = pumpMap[e.code];
+      if (!(S.pumpFailUntil[p] > now)) { S.pumps[p] = !S.pumps[p]; if (record) S.pumpPresses++; }
+      e.preventDefault();
+    } else if (e.code === "KeyP") {
+      const c = S.commCur;
+      if (c && c.ev.attn && !c.answered) { c.answered = true; S.attnPass = true; }
+      e.preventDefault();
+    }
+  }
+  window.addEventListener("keydown", onKey);
+
+  function resetGauge(g) { if (g === "G" || g === "R") setLight(g, false); }
+
+  // ---- 루프 ----
+  let t0 = null, last = null;
+  function frame(ts) {
+    if (t0 === null) { t0 = ts; last = ts; }
+    now = (ts - t0) / 1000;
+    const dt = Math.min(0.1, (ts - last) / 1000); last = ts;
+    tracker.step(now, dt, record);
+    if (mode === "multi") updateMulti(dt);
+    const left = Math.max(0, duration - now);
+    hud.textContent = `${record ? "본 과제" : "연습"} · 남은 시간 ${Math.ceil(left)}초`;
+    if (now >= duration) return finish();
+    requestAnimationFrame(frame);
+  }
+
+  function updateMulti(dt) {
+    // 시스템 감시: 고장 발생
+    while (sysIdx < schedule.sys.length && schedule.sys[sysIdx].t <= now) {
+      const ev = schedule.sys[sysIdx++];
+      if (S.sysActive[ev.gauge]) continue; // 같은 계기 중복 방지
+      S.sysActive[ev.gauge] = { ev, start: now };
+      if (record) { if (ev.auto) S.sysAutoTotal++; else S.sysManualTotal++; }
+      if (ev.gauge === "G" || ev.gauge === "R") setLight(ev.gauge, true);
+    }
+    // 자동 처리 & 시간초과
+    for (const g of Object.keys(S.sysActive)) {
+      const a = S.sysActive[g], age = now - a.start;
+      if (a.ev.auto && age >= 1.5) { delete S.sysActive[g]; resetGauge(g); flashAuto(); }
+      else if (!a.ev.auto && age >= 10) { if (record) S.sysMiss++; delete S.sysActive[g]; resetGauge(g); }
+    }
+    // 계기 바늘
+    for (const k of ["S1", "S2", "S3", "S4"]) {
+      sysJitter[k] += (Math.random() - 0.5) * dt * 1.6; sysJitter[k] *= 0.97;
+      const a = S.sysActive[k];
+      const base = a ? a.ev.dir * 0.85 : 0;
+      sysPointer(k, Math.max(-1, Math.min(1, base + sysJitter[k] * (a ? 0.4 : 1) + 0.12 * Math.sin(now * 2 + k.charCodeAt(1)))));
+    }
+    // 교신
+    while (commIdx < schedule.comm.length && schedule.comm[commIdx].t <= now) {
+      const ev = schedule.comm[commIdx++];
+      if (S.commCur && S.commCur.ev.own && !S.commCur.answered && record) S.commMiss++;
+      S.commCur = { ev, start: now, answered: false };
+      if (record && ev.own) S.commOwnTotal++;
+      if (ev.attn) { S.attnShown = true; if (S.attnPass === null) S.attnPass = false; }
+      const box = $("#commBox"); box.classList.add("active");
+      if (tts.on) {
+        const cur = S.commCur;
+        box.textContent = "📻 수신 중";
+        say(commSpeech(ev), () => { if (S.commCur === cur && !cur.answered) cur.start = now; }); // 반응시간은 음성 시작부터
+      } else box.innerHTML = ev.attn
+        ? `<b>[확인]</b> 이 문장을 읽었다면 키보드 <kbd>P</kbd>를 누르세요.`
+        : `<span class="callsign">${ev.call}</span>, 채널 <b>${ev.ch}</b>(으)로 전환하라.`;
+    }
+    if (S.commCur && now - S.commCur.start >= (tts.on ? 10 : 8)) {
+      if (S.commCur.ev.own && !S.commCur.answered && record) S.commMiss++;
+      S.commCur = null; const box = $("#commBox"); box.classList.remove("active"); box.textContent = tts.on ? "수신 대기" : "대기 중";
+    }
+    // 펌프 고장
+    while (pfIdx < schedule.pumpFail.length && schedule.pumpFail[pfIdx].t <= now) {
+      const f = schedule.pumpFail[pfIdx++]; S.pumpFailUntil[f.pump] = now + f.len; S.pumps[f.pump] = false;
+    }
+    // 연료: 탱크마다 고유 소모량, 펌프가 켜져 있으면 PUMP_FLOW 공급
+    let allIn = true;
+    TANKS.forEach((k, i) => {
+      const flow = S.pumps["P" + (i + 1)] ? PUMP_FLOW : 0;
+      S.tanks[k] = Math.max(0, Math.min(4000, S.tanks[k] + (flow - DRAIN[k]) * dt * FUEL_SPEED));
+      const lv = S.tanks[k], inK = Math.abs(lv - 2500) <= 500;
+      if (!inK) allIn = false;
+      if (record && inK) S.inBand[k] += dt;
+      const tk = $("#t" + k);
+      $(".fuel", tk).style.height = (lv / 4000 * 100) + "%";
+      $(".fuel", tk).style.background = inK ? "#7fb2ff" : "#f3a3a3";
+      $(".band", tk).style.bottom = (2000 / 4000 * 100) + "%"; $(".band", tk).style.height = (1000 / 4000 * 100) + "%";
+      $(".val", tk).textContent = Math.round(lv);
+    });
+    if (record) { S.rmTime += dt; if (allIn) S.inBandAll += dt; }
+    for (const p of ["P1", "P2", "P3", "P4"]) {
+      const e = $("#" + p), failed = S.pumpFailUntil[p] > now;
+      e.classList.toggle("fail", failed); e.classList.toggle("on", !failed && S.pumps[p]);
+    }
+  }
+
+  function finish() {
+    running = false;
+    window.removeEventListener("keydown", onKey);
+    if (tts.supported) speechSynthesis.cancel();
+    task.style.display = "none";
+    const tr = tracker.result();
+    const pct = x => r2(S.rmTime ? x / S.rmTime * 100 : null);
+    const out = { trk: r2(tr.rmse), moved: r2(tr.moved) };
+    if (mode === "multi") {
+      if (S.commCur && S.commCur.ev.own && !S.commCur.answered && record) S.commMiss++;
+      // 종료 시점에 남은 수동 고장은 판정에서 제외(관측 시간 부족)
+      Object.assign(out, {
+        smN: S.sysManualTotal, smHit: S.sysHits, smMiss: S.sysMiss, smRT: r2(mean(S.sysRT)), smFA: S.sysFA, smAutoN: S.sysAutoTotal,
+        cmN: S.commOwnTotal, cmHit: S.commHits, cmMiss: S.commMiss, cmWrong: S.commWrongCh, cmRT: r2(mean(S.commRT)), cmFA: S.commFA,
+        rmAll: pct(S.inBandAll), rmAvg: r2(mean(TANKS.map(k => pct(S.inBand[k])))),
+        rmA: pct(S.inBand.A), rmB: pct(S.inBand.B), rmC: pct(S.inBand.C), rmD: pct(S.inBand.D), rmPress: S.pumpPresses,
+        attn: S.attnShown ? (S.attnPass ? 1 : 0) : null,
+      });
+    }
+    onDone(out);
+  }
+  requestAnimationFrame(frame);
+}
+
+// ---------- 결과 코드 ----------
+function makeCode(data) {
+  const body = JSON.stringify(data);
+  const payload = JSON.stringify({ d: data, c: fnv1a(body) });
+  return "MT" + VERSION + "-" + btoa(unescape(encodeURIComponent(payload)));
+}
+
+// ---------- 진행 순서 ----------
+const results = { v: VERSION, id: session.id, start: session.start, scr: session.screen, fast: FAST ? 1 : 0 };
+
+function step0() {
+  showScreen(`
+    <h1>다중과업 수행 연구에 참여해 주셔서 감사합니다</h1>
+    <p>이 과제는 <b>여러 일을 동시에 처리하는 능력</b>을 측정하는 연구의 일부입니다. 조종 경험이나 사전 지식은 필요 없습니다.</p>
+    <ul>
+      <li>소요 시간: 약 <b>15분</b> (중간에 멈출 수 없으니 방해받지 않는 시간에 참여해 주세요)</li>
+      <li>필요한 것: <b>PC, 마우스(권장), 키보드, 스피커 또는 이어폰</b> (음성 교신이 나옵니다)</li>
+      <li>이 페이지는 어떤 정보도 서버로 보내지 않습니다. 끝에 나오는 <b>결과 코드</b>를 설문지에 붙여 넣는 방식으로만 제출됩니다.</li>
+      <li>언제든 창을 닫아 참여를 그만둘 수 있습니다.</li>
+    </ul>
+    <p><label><input type="checkbox" id="agree"> 위 내용을 읽었고 참여에 동의합니다.</label></p>
+    <p class="muted">참가 번호: ${session.id}</p>`, "시작하기", stepSound, { requireCheck: "#agree" });
+}
+
+// ---------- 소리 확인 ----------
+function stepSound() {
+  screens.innerHTML = "";
+  const s = el("div", { className: "screen" }, `
+    <h1>소리 확인</h1>
+    <p>과제 2에서는 교신이 <b>음성</b>으로 나옵니다. 스피커나 이어폰을 켜고 소리 크기를 적당히 맞춘 뒤 아래 버튼을 눌러 주세요.</p>
+    <p>“<b>블루 원, 블루 원. 채널 디로 전환하라.</b>”라는 한국어 음성이 들리면 정상입니다.</p>
+    <div class="row"><button id="play">소리 재생</button><span class="muted" id="vinfo"></span></div>
+    <div class="row"><button id="heard" disabled>잘 들립니다</button>
+      <button id="noSound" style="background:#8a93a3" disabled>여러 번 눌러도 안 들립니다</button></div>
+    <p class="muted">안 들리면 컴퓨터 음량, 음소거, 이어폰 연결을 확인하고 다시 재생해 보세요. 그래도 안 되면 “안 들립니다”를 누르면 교신이 글자로 나옵니다.</p>`);
+  screens.appendChild(s);
+  const vinfo = $("#vinfo", s);
+  if (!tts.supported) {
+    vinfo.textContent = "이 브라우저는 음성 기능을 지원하지 않습니다. Chrome 또는 Edge를 권장합니다.";
+    $("#noSound", s).disabled = false;
+  }
+  $("#play", s).addEventListener("click", () => {
+    tts.voice = pickVoice();
+    vinfo.textContent = tts.voice ? "" : "한국어 음성을 찾지 못했습니다. 들리지 않으면 Chrome 또는 Edge로 다시 열어 주세요.";
+    say("블루 원, 블루 원. 채널 디로 전환하라.");
+    $("#heard", s).disabled = false; $("#noSound", s).disabled = false;
+  });
+  $("#heard", s).addEventListener("click", () => { tts.on = true; results.tts = 1; results.vo = tts.voice ? tts.voice.name.slice(0, 40) : "default"; step1(); });
+  $("#noSound", s).addEventListener("click", () => { tts.on = false; results.tts = 0; results.vo = tts.voice ? tts.voice.name.slice(0, 40) : null; step1(); });
+  window.scrollTo(0, 0);
+}
+
+function step1() {
+  showScreen(`
+    <h1>과제 1. 추적</h1>
+    <p>화면 속 <b style="color:#2457c5">파란 원</b>이 천천히 움직입니다. 마우스로 <b>검은 십자 표시</b>를 움직여 파란 원 중심에 최대한 가깝게 유지하세요.</p>
+    <p>먼저 <b>${Math.round(DUR.A_PRACTICE)}초 연습</b>을 한 뒤, <b>${Math.round(DUR.A_MAIN)}초 본 과제</b>를 합니다.</p>
+    <p class="muted">마우스 커서를 추적 화면 안에 두세요. 화면 밖으로 나가면 마지막 위치에 멈춥니다.</p>`,
+    "연습 시작", () => countdown(() => runTask({ mode: "single", duration: DUR.A_PRACTICE, schedule: null, record: false,
+      onDone: () => showScreen(`<h1>연습 끝</h1><p>이제 <b>본 과제</b>입니다. ${Math.round(DUR.A_MAIN)}초 동안 최대한 정확하게 따라가 주세요.</p>`,
+        "본 과제 시작", () => countdown(() => runTask({ mode: "single", duration: DUR.A_MAIN, schedule: null, record: true,
+          onDone: r => { results.A = r; step2(); } }))) })));
+}
+
+const KEYGUIDE = () => `
+  <table class="keytable">
+    <tr><td><b>추적</b> (오른쪽 위)</td><td>과제 1과 같습니다. 마우스로 파란 원을 따라가세요.</td></tr>
+    <tr><td><b>시스템 감시</b> (왼쪽 위)</td><td>
+      <b>자동 감시</b>가 대부분의 이상을 스스로 처리합니다(“자동 처리됨” 표시). 하지만 <b>가끔 놓칩니다.</b><br>
+      이상이 생긴 뒤 자동 처리되지 않고 남아 있으면 직접 처리하세요.<br>
+      · 계기 바늘이 <b>빨간 영역(위/아래)</b>에 머무르면 → 해당 번호 <kbd>1</kbd>~<kbd>4</kbd><br>
+      · <b>정상등</b>(평소 초록)이 꺼지면 → <kbd>5</kbd> &nbsp; · <b>경고등</b>(평소 회색)이 빨갛게 켜지면 → <kbd>6</kbd></td></tr>
+    <tr><td><b>교신</b> (왼쪽 아래)</td><td>
+      ${tts.on ? "교신은 <b>음성</b>으로 나옵니다. " : ""}내 호출부호는 <b>BLUE-1</b>${tts.on ? "(“블루 원”)" : ""}입니다. <b>BLUE-1</b>을 부를 때만 지시된 채널 키를 누르세요: <kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd><br>
+      다른 호출부호(${tts.on ? "레드 쓰리, 블루 세븐, 블루 일레븐 등" : "RED-3, BLUE-7, BLUE-11 등"})는 <b>무시</b>하세요.${tts.on ? "<br>“확인 메시지”가 들리면 안내대로 키를 누르세요." : ""}</td></tr>
+    <tr><td><b>연료 관리</b> (오른쪽 아래)</td><td>
+      네 탱크는 각자 다른 속도로 줄어듭니다. 펌프를 켜고 꺼서 <b>네 탱크 모두</b> 연료를 <b>초록 점선 범위</b> 안에 유지하세요.<br>
+      탱크 A <kbd>Z</kbd> · 탱크 B <kbd>X</kbd> · 탱크 C <kbd>C</kbd> · 탱크 D <kbd>V</kbd> (누를 때마다 켜기/끄기). 펌프를 켜면 그 탱크가 차오르고, 끄면 줄어듭니다. 빨간 펌프는 고장으로 잠시 쓸 수 없습니다.</td></tr>
+  </table>`;
+
+function step2() {
+  showScreen(`
+    <h1>과제 2. 다중 감독</h1>
+    <p>이번에는 <b>네 가지 일을 동시에</b> 합니다. 실제 조종사가 여러 무인기와 자동화 시스템을 함께 감독하는 상황을 단순하게 본뜬 것입니다.</p>
+    ${KEYGUIDE()}
+    <p class="muted">키는 화면에도 계속 표시됩니다. 한글 입력 상태여도 동작합니다.</p>
+    <p>먼저 <b>${Math.round(DUR.B_PRACTICE)}초 연습</b>을 합니다. 연습은 점수에 들어가지 않습니다.</p>`,
+    "연습 시작", () => countdown(() => runTask({ mode: "multi", duration: DUR.B_PRACTICE,
+      schedule: buildSchedule(DUR.B_PRACTICE, 7, 1.6), record: false, onDone: step3 })));
+}
+
+function step3() {
+  showScreen(`
+    <h1>연습 끝</h1>
+    <p>이제 <b>본 과제</b>입니다. <b>${Math.round(DUR.B_MAIN / 60 * 10) / 10}분</b> 동안 진행되며 중간에 멈출 수 없습니다.</p>
+    <p>네 가지 일 모두 중요합니다. 어느 하나만 하지 말고 고르게 신경 써 주세요.</p>
+    <details><summary>조작 방법 다시 보기</summary>${KEYGUIDE()}</details>`,
+    "본 과제 시작", () => countdown(() => runTask({ mode: "multi", duration: DUR.B_MAIN,
+      schedule: buildSchedule(DUR.B_MAIN, 20261026, 1), record: true,
+      onDone: r => { results.B = r; finishAll(); } })));
+}
+
+function finishAll() {
+  results.end = new Date().toISOString();
+  results.away = session.tabAway;
+  const code = makeCode(results);
+  screens.innerHTML = "";
+  const s = el("div", { className: "screen" }, `
+    <h1>수고하셨습니다!</h1>
+    <p>아래 <b>결과 코드 전체</b>를 복사해서 설문지의 “결과 코드” 칸에 붙여 넣어 주세요. 코드를 제출해야 참여가 완료됩니다.</p>
+    <textarea id="code" rows="6" readonly></textarea>
+    <div class="row"><button id="copyBtn">코드 복사</button><span class="muted" id="copied"></span></div>
+    <h2>다음 단계: 설문지</h2>
+    <p id="formLine"></p>
+    <p class="muted">참가 번호: ${session.id} · 이 창을 닫기 전에 설문 제출을 마쳐 주세요.</p>`);
+  screens.appendChild(s);
+  $("#code").value = code;
+  const formUrl = params.get("form") || (typeof FORM_URL === "string" ? FORM_URL : "");
+  $("#formLine").innerHTML = formUrl
+    ? `<a href="${formUrl}" target="_blank" rel="noopener">설문지 열기 (새 창)</a>`
+    : "안내받은 설문지 링크로 이동해 주세요.";
+  $("#copyBtn").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(code); $("#copied").textContent = "복사됨"; }
+    catch { $("#code").select(); document.execCommand("copy"); $("#copied").textContent = "복사됨"; }
+  });
+  window.__RESULT__ = results; // 자동 점검용
+}
+
+// 설문지 링크: 아래 따옴표 안에 구글 폼 주소를 넣으면 마지막 화면에 링크가 나타난다.
+const FORM_URL = "";
+
+window.addEventListener("beforeunload", e => { if (running) { e.preventDefault(); e.returnValue = ""; } });
+step0();
+</script>
+</body>
+</html>
