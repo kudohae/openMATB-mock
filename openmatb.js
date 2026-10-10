@@ -467,6 +467,38 @@ function logVisit(stage) {
     fetch(VISIT_LOG, { method: "POST", mode: "no-cors", body, keepalive: true }).catch(() => {});
 }
 
+// Phones and tablets: only the reasons and a way to keep the link for a PC (share sheet, copy)
+function setupMobileHandoff() {
+    for (const element of $("study").children) {
+        if (element.id !== "mobile-warning" && !element.classList.contains("lead")) {
+            element.style.display = "none"; // the hidden attribute loses to display: flex of .study-buttons
+        }
+    }
+    const url = location.origin + location.pathname;
+    $("m-url").textContent = url.replace(/^https?:\/\//, "").replace(/\/$/, "");
+    if (navigator.share) {
+        $("m-share").hidden = false;
+        $("m-share").onclick = async () => {
+            try {
+                await navigator.share({ title: "다중과업 수행 연구 (PC에서 열기)", url });
+                $("m-done").textContent = "보냈습니다. PC에서 열어 주세요.";
+                logVisit("휴대폰 링크 공유");
+            } catch {
+                // Share sheet closed
+            }
+        };
+    }
+    $("m-copy").onclick = async () => {
+        try {
+            await navigator.clipboard.writeText(url);
+        } catch {
+            window.prompt("링크를 길게 눌러 복사해 주세요.", url);
+        }
+        $("m-done").textContent = "링크를 복사했습니다. 카톡 나와의 채팅이나 메모에 붙여 두고 PC에서 열어 주세요.";
+        logVisit("휴대폰 링크 복사");
+    };
+}
+
 function setupStudyPage() {
     document.body.classList.add("study");
     $("lang").value = "ko_KR";
@@ -484,6 +516,9 @@ function setupStudyPage() {
     const mobile = IS_MOBILE;
     $("mobile-warning").hidden = !mobile;
     logVisit(mobile ? "열람(휴대폰, 차단됨)" : "열람");
+    if (mobile) {
+        setupMobileHandoff();
+    }
     const showStart = () => {
         $("start").hidden = mobile || !(soundChecked && $("agree").checked && preQuestionsDone());
     };
@@ -730,7 +765,8 @@ async function importSession(pyodide, file, bytes) {
     pyodide.FS.writeFile(`${folder}/${file.name.replace(/\.gz$/i, "")}`, new Uint8Array(csv));
 }
 
-const ready = boot().catch((error) => {
+// Phones never start the test: don't download Python (about 20 MB) over their data plan
+const ready = (STUDY && IS_MOBILE ? new Promise(() => {}) : boot()).catch((error) => {
     status("loading_failed", String(error));
     throw error;
 });
