@@ -2091,7 +2091,7 @@ index 0000000..27fa5ec
 +};
 +window.MouseTracking = MouseTracking;
 diff --git a/web/openmatb.js b/web/openmatb.js
-index e26ec0b..e0fbe3b 100644
+index e26ec0b..7b3e71e 100644
 --- a/web/openmatb.js
 +++ b/web/openmatb.js
 @@ -15,6 +15,8 @@ import { connectScorm } from "./scorm.js";
@@ -2140,7 +2140,7 @@ index e26ec0b..e0fbe3b 100644
  // ?lang= in the URL, otherwise the first browser language OpenMATB is translated in, otherwise English
  function detectLanguage() {
      const requested = new URLSearchParams(location.search).get("lang");
-@@ -359,6 +391,144 @@ checkBrowser();
+@@ -359,6 +391,164 @@ checkBrowser();
  // ?demo=1 (Demo tab of the website): runs the demo scenario, and nothing is recorded
  const DEMO = new URLSearchParams(location.search).get("demo") === "1";
  const DEMO_SCENARIO = "demo.txt";
@@ -2200,6 +2200,26 @@ index e26ec0b..e0fbe3b 100644
 +    return PRE_QUESTIONS.every(([key]) => key in preAnswers) && "before" in preAnswers;
 +}
 +
++// Visit counter of the study page: one anonymous row (stage, device) per step in a Google Form owned by the
++// researcher. No name, address or score; failures are ignored
++const VISIT_LOG = "https://docs.google.com/forms/d/e/1FAIpQLScuKK6QTl_JDZYfGo29X3i2W8Tl49WMwYxZPXSYX2sqdWyybg/formResponse";
++const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
++    (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent)); // iPadOS reports a Mac
++
++function logVisit(stage) {
++    if (!STUDY) {
++        return;
++    }
++    const ua = navigator.userAgent;
++    const browser = /Edg\//.test(ua) ? "Edge" : /SamsungBrowser/.test(ua) ? "Samsung" : /KAKAOTALK/i.test(ua) ? "KakaoTalk"
++        : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : /Firefox\//.test(ua) ? "Firefox" : "other";
++    const body = new URLSearchParams({
++        "entry.1949545432": QUERY.get("fast") === "1" ? `${stage} (fast)` : stage,
++        "entry.1369225893": `${IS_MOBILE ? "mobile" : "pc"} ${browser}`,
++    });
++    fetch(VISIT_LOG, { method: "POST", mode: "no-cors", body, keepalive: true }).catch(() => {});
++}
++
 +function setupStudyPage() {
 +    document.body.classList.add("study");
 +    $("lang").value = "ko_KR";
@@ -2214,9 +2234,9 @@ index e26ec0b..e0fbe3b 100644
 +        KoreanTTS.speak(SAMPLE_PROMPT);
 +        $("sound-ok").disabled = false;
 +    });
-+    const mobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
-+        (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent)); // iPadOS reports a Mac
++    const mobile = IS_MOBILE;
 +    $("mobile-warning").hidden = !mobile;
++    logVisit(mobile ? "열람(휴대폰, 차단됨)" : "열람");
 +    const showStart = () => {
 +        $("start").hidden = mobile || !(soundChecked && $("agree").checked && preQuestionsDone());
 +    };
@@ -2285,7 +2305,7 @@ index e26ec0b..e0fbe3b 100644
  // config.ini values of the demo: no session number to acknowledge, and the session is not sent anywhere
  const DEMO_CONFIG = { display_session_number: "False", web_session_output: "none" };
  
-@@ -427,10 +597,23 @@ async function returnToCourse() {
+@@ -427,10 +617,23 @@ async function returnToCourse() {
  }
  
  async function loadFonts() {
@@ -2313,7 +2333,7 @@ index e26ec0b..e0fbe3b 100644
      }
  }
  
-@@ -631,6 +814,11 @@ $("mode").addEventListener("change", () => {
+@@ -631,6 +834,12 @@ $("mode").addEventListener("change", () => {
  $("start").addEventListener("click", async () => {
      // Everything that needs the user gesture must happen before the first await
      const wantsFullscreen = $("fullscreen").checked;
@@ -2321,11 +2341,12 @@ index e26ec0b..e0fbe3b 100644
 +        // Tracking by mouse movements: the pointer is hidden for the whole session. Before the full screen request,
 +        // which may use up the click; mouse_tracking.js retries on the next key press if this lock fails
 +        MouseTracking.lockNow();
++        logVisit("시작");
 +    }
      const fullscreen = wantsFullscreen ? document.documentElement.requestFullscreen().catch(() => {}) : null;
  
      const params = new URLSearchParams(location.search);
-@@ -639,6 +827,9 @@ $("start").addEventListener("click", async () => {
+@@ -639,6 +848,9 @@ $("start").addEventListener("click", async () => {
      if (DEMO && !params.has("scenario")) {
          params.set("scenario", DEMO_SCENARIO);
      }
@@ -2335,7 +2356,7 @@ index e26ec0b..e0fbe3b 100644
      history.replaceState(null, "", `?${params}`);
  
      const file = $("mode").value === "replay" ? $("session-file").files[0] : undefined;
-@@ -688,6 +879,10 @@ $("start").addEventListener("click", async () => {
+@@ -688,6 +900,10 @@ $("start").addEventListener("click", async () => {
      }
      status(null);
      try {
@@ -2346,7 +2367,7 @@ index e26ec0b..e0fbe3b 100644
          await pyodide.runPythonAsync(`import runpy; runpy.run_path("main.py", run_name="__main__")`);
          $("pygletCanvas").focus();
      } catch (error) {
-@@ -729,6 +924,7 @@ function destinationItem(text, ok) {
+@@ -729,6 +945,7 @@ function destinationItem(text, ok) {
  
  // Dispatched by core.logger.Logger.end_session(), with the path of the session file: download it and/or send it
  document.addEventListener("openmatb-end", async (event) => {
@@ -2354,11 +2375,12 @@ index e26ec0b..e0fbe3b 100644
      if (document.fullscreenElement) {
          document.exitFullscreen();
      }
-@@ -751,6 +947,9 @@ document.addEventListener("openmatb-end", async (event) => {
+@@ -751,6 +968,10 @@ document.addEventListener("openmatb-end", async (event) => {
          document.querySelector('#end [data-i18n="kept_in_browser"]').hidden = true;
          return;
      }
 +    if (STUDY) {
++        logVisit("완료");
 +        await showStudyResult(pyodide, event.detail);
 +    }
      const output = sessionOutput || new SessionOutput(sessionOutputSettings(""));

@@ -447,6 +447,26 @@ function preQuestionsDone() {
     return PRE_QUESTIONS.every(([key]) => key in preAnswers) && "before" in preAnswers;
 }
 
+// Visit counter of the study page: one anonymous row (stage, device) per step in a Google Form owned by the
+// researcher. No name, address or score; failures are ignored
+const VISIT_LOG = "https://docs.google.com/forms/d/e/1FAIpQLScuKK6QTl_JDZYfGo29X3i2W8Tl49WMwYxZPXSYX2sqdWyybg/formResponse";
+const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+    (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent)); // iPadOS reports a Mac
+
+function logVisit(stage) {
+    if (!STUDY) {
+        return;
+    }
+    const ua = navigator.userAgent;
+    const browser = /Edg\//.test(ua) ? "Edge" : /SamsungBrowser/.test(ua) ? "Samsung" : /KAKAOTALK/i.test(ua) ? "KakaoTalk"
+        : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : /Firefox\//.test(ua) ? "Firefox" : "other";
+    const body = new URLSearchParams({
+        "entry.1949545432": QUERY.get("fast") === "1" ? `${stage} (fast)` : stage,
+        "entry.1369225893": `${IS_MOBILE ? "mobile" : "pc"} ${browser}`,
+    });
+    fetch(VISIT_LOG, { method: "POST", mode: "no-cors", body, keepalive: true }).catch(() => {});
+}
+
 function setupStudyPage() {
     document.body.classList.add("study");
     $("lang").value = "ko_KR";
@@ -461,9 +481,9 @@ function setupStudyPage() {
         KoreanTTS.speak(SAMPLE_PROMPT);
         $("sound-ok").disabled = false;
     });
-    const mobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
-        (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent)); // iPadOS reports a Mac
+    const mobile = IS_MOBILE;
     $("mobile-warning").hidden = !mobile;
+    logVisit(mobile ? "열람(휴대폰, 차단됨)" : "열람");
     const showStart = () => {
         $("start").hidden = mobile || !(soundChecked && $("agree").checked && preQuestionsDone());
     };
@@ -818,6 +838,7 @@ $("start").addEventListener("click", async () => {
         // Tracking by mouse movements: the pointer is hidden for the whole session. Before the full screen request,
         // which may use up the click; mouse_tracking.js retries on the next key press if this lock fails
         MouseTracking.lockNow();
+        logVisit("시작");
     }
     const fullscreen = wantsFullscreen ? document.documentElement.requestFullscreen().catch(() => {}) : null;
 
@@ -948,6 +969,7 @@ document.addEventListener("openmatb-end", async (event) => {
         return;
     }
     if (STUDY) {
+        logVisit("완료");
         await showStudyResult(pyodide, event.detail);
     }
     const output = sessionOutput || new SessionOutput(sessionOutputSettings(""));
