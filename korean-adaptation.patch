@@ -496,7 +496,7 @@ index b2f7f4a..fe185ae 100644
          return (*shape.color[:3], shape.opacity)
 diff --git a/includes/instructions/korean/01_welcome.txt b/includes/instructions/korean/01_welcome.txt
 new file mode 100644
-index 0000000..8f1ed35
+index 0000000..ae3a2cc
 --- /dev/null
 +++ b/includes/instructions/korean/01_welcome.txt
 @@ -0,0 +1,7 @@
@@ -504,7 +504,7 @@ index 0000000..8f1ed35
 +
 +<p>이 과제는 프랑스 연구진이 공개한 다중과업 연구 도구 <strong>OpenMATB</strong>를 한국어로 옮긴 것입니다. 조종 경험이나 사전 지식은 필요 없습니다.</p>
 +
-+<p>과제는 두 부분이며, 설명과 연습을 포함해 모두 <strong>약 15분</strong>입니다.<br>· <strong>과제 1</strong> : 추적과 교신, 두 가지를 동시에<br>· <strong>과제 2</strong> : 시스템 감시와 연료 관리를 더해 네 가지를 동시에</p>
++<p>과제는 두 부분이며, 설명과 연습을 포함해 모두 <strong>약 15분</strong>입니다.<br>· <strong>과제 1</strong> : 추적과 교신<br>· <strong>과제 2</strong> : 과제 1 + 시스템 감시와 연료 관리</p>
 +
 +<p>왼손은 키보드, 오른손은 마우스에 두세요. 다른 창으로 가면 과제가 멈추니 끝날 때까지 이 화면에 머물러 주세요. 소리를 켜 두세요.</p>
 diff --git a/includes/instructions/korean/99_end.txt b/includes/instructions/korean/99_end.txt
@@ -518,34 +518,34 @@ index 0000000..a801751
 +<p>그 코드를 복사해 설문지에 붙여 넣어야 참여가 완료됩니다.</p>
 diff --git a/includes/instructions/korean/A1_track.txt b/includes/instructions/korean/A1_track.txt
 new file mode 100644
-index 0000000..860ff68
+index 0000000..ae59341
 --- /dev/null
 +++ b/includes/instructions/korean/A1_track.txt
 @@ -0,0 +1,5 @@
 +<h1>과제 1. 추적 (가운데 위)</h1>
-+<p>주황 테두리 안의 <strong>초록 원이 여러분의 커서</strong>입니다. 커서는 저절로 계속 가운데에서 벗어나려 합니다.</p>
-+<p><strong>마우스를 움직이면 커서가 그만큼 움직입니다.</strong> 버튼은 누르지 않아도 됩니다. 커서를 <strong>가운데 원 안</strong>에 최대한 오래 두세요. 원 밖으로 나가면 커서가 빨갛게 바뀝니다.</p>
-+<p>과제 중에는 마우스 화살표가 보이지 않습니다. 화면에서 움직이는 것은 초록 커서뿐입니다.</p>
++<p><strong>십자가가 그려진 작은 원이 여러분의 마우스 커서</strong>입니다. 커서는 계속 가운데에서 벗어나려 합니다.</p>
++<p><strong>마우스를 움직이면 커서가 그만큼 움직입니다.</strong> 클릭을 할 일은 없습니다. 커서를 <strong>가운데</strong>에 최대한 가까이, 오래 두세요. 원 밖으로 나가면 커서가 빨갛게 바뀝니다.</p>
++<p>과제 중에는 마우스 화살표가 보이지 않습니다.</p>
 +<p>스페이스 바를 누르면 <strong>20초</strong> 동안 연습합니다.</p>
 diff --git a/includes/instructions/korean/A2_comm.txt b/includes/instructions/korean/A2_comm.txt
 new file mode 100644
-index 0000000..d15563e
+index 0000000..9128978
 --- /dev/null
 +++ b/includes/instructions/korean/A2_comm.txt
 @@ -0,0 +1,4 @@
 +<h1>교신 (왼쪽 아래)</h1>
-+<p>관제 음성이 호출부호를 부르고 무전기와 주파수를 알려 줍니다. 맨 위에 적힌 <strong>내 호출부호</strong>를 부를 때만 반응합니다.</p>
-+<p>· <strong>↑ ↓</strong> : 무전기 고르기 (화살표 표시가 옮겨 갑니다)<br>· <strong>← →</strong> : 주파수 내리기 / 올리기 (누르고 있으면 계속 바뀝니다)<br>· <strong>Enter</strong> : 무전기와 주파수를 다 맞췄으면 확인 (그 칸이 잠깐 옅은 초록색으로 바뀝니다)</p>
-+<p>스페이스 바를 누르면 내 호출부호로 지시가 나옵니다. 그대로 맞추고 Enter를 누르면 다음으로 넘어갑니다.</p>
++<p>관제 음성이 호출부호를 부르고 무전기와 주파수를 알려 줍니다. 위에 적힌 <strong>내 호출부호</strong>를 부를 때만 반응하면 됩니다.</p>
++<p>· <strong>↑ ↓</strong> : 무전기 고르기 (화살표 표시가 옮겨 갑니다)<br>· <strong>← →</strong> : 주파수 변경하기 (누르고 있으면 계속 바뀝니다)<br>· <strong>Enter</strong> : 무전기와 주파수를 다 맞췄으면 확인</p>
++<p>지시에 맞게 무전기와 주파수를 맞추고 Enter를 누르면 다음으로 넘어갑니다.</p>
 diff --git a/includes/instructions/korean/A3_comm_other.txt b/includes/instructions/korean/A3_comm_other.txt
 new file mode 100644
-index 0000000..5053012
+index 0000000..4f84e17
 --- /dev/null
 +++ b/includes/instructions/korean/A3_comm_other.txt
 @@ -0,0 +1,3 @@
 +<h1>잘했습니다</h1>
 +<p>이번에는 <strong>다른 호출부호</strong>를 부릅니다. 내 호출부호가 아니면 <strong>아무것도 누르지 마세요.</strong></p>
-+<p>스페이스 바를 누르고 들어 보세요(약 12초).</p>
++<p>들어 보세요(약 12초).</p>
 diff --git a/includes/instructions/korean/A4_both.txt b/includes/instructions/korean/A4_both.txt
 new file mode 100644
 index 0000000..0de4970
@@ -588,42 +588,42 @@ index 0000000..fb9ec1e
 +<p>지금은 화면이 멈춰 있습니다. 새로 나온 두 칸을 하나씩 배워 봅시다.</p>
 diff --git a/includes/instructions/korean/B2_sysmon.txt b/includes/instructions/korean/B2_sysmon.txt
 new file mode 100644
-index 0000000..a4fff99
+index 0000000..d660dcd
 --- /dev/null
 +++ b/includes/instructions/korean/B2_sysmon.txt
 @@ -0,0 +1,5 @@
 +<h1>시스템 감시 (왼쪽 위)</h1>
 +<p>계기 4개와 등 2개를 지켜보다가, 이상이 생기면 해당 키를 눌러 바로잡습니다.</p>
-+<p>· 계기의 화살표가 가운데를 벗어나 <strong>위나 아래 끝으로 치우치면</strong> 그 계기 번호 <strong>1~4</strong><br>· 평소 켜져 있는 <strong>초록 등(5)이 꺼지면</strong> 5<br>· 평소 꺼져 있는 <strong>빨간 등(6)이 켜지면</strong> 6</p>
-+<p>이 칸에는 <strong>자동 감시 장치</strong>가 있어 이상의 일부를 스스로 고칩니다. 하지만 <strong>자주 놓칩니다.</strong> 몇 초가 지나도 그대로인 이상은 직접 처리하세요. 10초 안에 처리하지 않으면 놓친 것으로 기록됩니다.</p>
++<p>· 계기의 화살표가 가운데를 벗어나 <strong>위나 아래 끝으로 치우치면</strong> 그 계기 번호 <strong>1~4</strong><br>· 평소 <strong>켜져</strong> 있는 <strong>초록 등(좌)이 꺼지면</strong> <strong>5</strong><br>· 평소 <strong>꺼져</strong> 있는 <strong>빨간 등(우)이 켜지면</strong> <strong>6</strong></p>
++<p>계기를 보정하는 <strong>자동 감시 장치</strong>는 가끔 <strong>놓칠 때가 있습니다.</strong> 몇 초가 지나도 그대로인 오류는 10초 내로 직접 처리하세요.</p>
 +<p>스페이스 바를 누르면 이 칸만 <strong>30초</strong> 동안 직접 해 봅니다.</p>
 diff --git a/includes/instructions/korean/B3_resman_goal.txt b/includes/instructions/korean/B3_resman_goal.txt
 new file mode 100644
-index 0000000..ccebc53
+index 0000000..b292ea8
 --- /dev/null
 +++ b/includes/instructions/korean/B3_resman_goal.txt
 @@ -0,0 +1,3 @@
 +<h1>연료 관리 (가운데 아래) : 목표</h1>
-+<p>할 일은 하나입니다. 위쪽 큰 탱크 <strong>A와 B</strong>의 연료를 <strong>2,250 ~ 2,750</strong> 사이로 유지하세요. 탱크 아래 숫자가 현재 연료량이고, 탱크 옆 <strong>검은 표시</strong>가 목표 높이(2,500)입니다.</p>
++<p>할 일은 하나입니다. 위쪽 큰 탱크 <strong>A와 B</strong>의 연료를 <strong>2,250 ~ 2,750</strong> 사이로 유지하세요. 탱크 아래 숫자가 현재 연료량이고, 탱크 옆 <strong>검은 사각형</strong>이 목표 구간입니다.</p>
 +<p>A와 B는 가만히 두면 계속 줄어듭니다. 아래쪽 탱크(C, D, E, F)는 연료를 보내 주는 창고일 뿐이라 맞출 필요가 없습니다.</p>
 diff --git a/includes/instructions/korean/B4_resman_pumps.txt b/includes/instructions/korean/B4_resman_pumps.txt
 new file mode 100644
-index 0000000..df51052
+index 0000000..7e9da24
 --- /dev/null
 +++ b/includes/instructions/korean/B4_resman_pumps.txt
 @@ -0,0 +1,4 @@
 +<h1>연료 관리 : 펌프로 채우기</h1>
-+<p>삼각형이 <strong>펌프</strong>이고, 안에 적힌 글자가 그 펌프의 키입니다. 키를 한 번 누르면 켜지고(초록), 다시 누르면 꺼집니다. 켜진 펌프는 화살표 방향으로 연료를 옮깁니다.</p>
++<p>삼각형이 <strong>펌프</strong>이고, 안에 적힌 글자가 그 펌프의 키입니다. 키를 한 번 누르면 켜지고(초록), 다시 누르면 꺼집니다. 켜진 펌프는 <strong>화살표 방향</strong>으로 연료를 옮깁니다.</p>
 +<p>· A를 채우는 펌프 : <strong>Q, W</strong> (테두리)<br>· B를 채우는 펌프 : <strong>E, R</strong> (오른쪽 같은 자리)</p>
 +<p>요령 : A나 B가 2,250 아래로 내려가면 그쪽 펌프를 켜고, 2,750 위로 올라가면 끄세요.</p>
 diff --git a/includes/instructions/korean/B5_resman_more.txt b/includes/instructions/korean/B5_resman_more.txt
 new file mode 100644
-index 0000000..3e8e356
+index 0000000..4f08b68
 --- /dev/null
 +++ b/includes/instructions/korean/B5_resman_more.txt
 @@ -0,0 +1,3 @@
 +<h1>연료 관리 : 알아 두면 좋은 것</h1>
-+<p>· <strong>C와 D</strong>는 양이 정해진 창고입니다. 비면 Q나 E 펌프를 켜도 연료가 오지 않습니다. 그때는 <strong>A, S</strong> 펌프로 E, F에서 채울 수 있습니다. E와 F는 연료가 무한합니다.<br>· <strong>D, F</strong> 펌프는 A와 B 사이로 연료를 옮깁니다. 한쪽만 넘칠 때 씁니다.<br>· <strong>빨간 펌프</strong>는 고장이라 잠시 쓸 수 없습니다.</p>
++<p>· <strong>C와 D</strong>는 양이 정해진 창고입니다. 바닥나면 Q나 E 펌프를 켜도 연료가 가지 않습니다. 그때는 <strong>A, S</strong> 펌프로 E, F로부터 채울 수 있습니다. E와 F는 연료가 무한합니다.<br>· <strong>D, F</strong> 펌프는 A와 B 사이로 연료를 옮깁니다. 한쪽만 넘칠 때 씁니다.<br>· <strong>빨간 펌프</strong>는 고장이며, 자동으로 고쳐질 때까지 잠시 쓸 수 없습니다.</p>
 +<p>스페이스 바를 누르면 이 칸만 <strong>45초</strong> 동안 직접 해 봅니다.</p>
 diff --git a/includes/instructions/korean/B6_all.txt b/includes/instructions/korean/B6_all.txt
 new file mode 100644
