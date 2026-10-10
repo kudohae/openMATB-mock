@@ -588,14 +588,14 @@ index 0000000..fb9ec1e
 +<p>지금은 화면이 멈춰 있습니다. 새로 나온 두 칸을 하나씩 배워 봅시다.</p>
 diff --git a/includes/instructions/korean/B2_sysmon.txt b/includes/instructions/korean/B2_sysmon.txt
 new file mode 100644
-index 0000000..d660dcd
+index 0000000..b801615
 --- /dev/null
 +++ b/includes/instructions/korean/B2_sysmon.txt
 @@ -0,0 +1,5 @@
 +<h1>시스템 감시 (왼쪽 위)</h1>
 +<p>계기 4개와 등 2개를 지켜보다가, 이상이 생기면 해당 키를 눌러 바로잡습니다.</p>
 +<p>· 계기의 화살표가 가운데를 벗어나 <strong>위나 아래 끝으로 치우치면</strong> 그 계기 번호 <strong>1~4</strong><br>· 평소 <strong>켜져</strong> 있는 <strong>초록 등(좌)이 꺼지면</strong> <strong>5</strong><br>· 평소 <strong>꺼져</strong> 있는 <strong>빨간 등(우)이 켜지면</strong> <strong>6</strong></p>
-+<p>계기를 보정하는 <strong>자동 감시 장치</strong>는 가끔 <strong>놓칠 때가 있습니다.</strong> 몇 초가 지나도 그대로인 오류는 10초 내로 직접 처리하세요.</p>
++<p>계기를 보정하는 <strong>자동 감시 장치</strong>는 <strong>놓칠 때가 있습니다.</strong> 몇 초가 지나도 그대로인 오류는 10초 내로 직접 처리하세요.</p>
 +<p>스페이스 바를 누르면 이 칸만 <strong>30초</strong> 동안 직접 해 봅니다.</p>
 diff --git a/includes/instructions/korean/B3_resman_goal.txt b/includes/instructions/korean/B3_resman_goal.txt
 new file mode 100644
@@ -636,13 +636,13 @@ index 0000000..c0d1ed0
 +<p>스페이스 바를 누르면 <strong>1분 연습</strong>을 합니다. 연습은 점수에 들어가지 않습니다.</p>
 diff --git a/includes/instructions/korean/B7_main.txt b/includes/instructions/korean/B7_main.txt
 new file mode 100644
-index 0000000..cda0d58
+index 0000000..5ecb37e
 --- /dev/null
 +++ b/includes/instructions/korean/B7_main.txt
 @@ -0,0 +1,4 @@
 +<h1>과제 2 본 과제</h1>
 +<p>이제 <strong>5분 본 과제</strong>입니다. 중간에 멈출 수 없으니 끝까지 이 화면에 머물러 주세요.</p>
-+<p>네 가지 일 모두 점수에 들어갑니다. 자동 감시 장치는 자주 놓친다는 점을 기억하세요.</p>
++<p>네 가지 일 모두 점수에 들어갑니다. 자동 감시 장치는 놓칠 때가 있다는 점을 기억하세요.</p>
 +<p>준비되면 스페이스 바를 누르세요.</p>
 diff --git a/includes/scenarios/korean/make_study.py b/includes/scenarios/korean/make_study.py
 new file mode 100644
