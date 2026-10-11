@@ -1921,7 +1921,7 @@ index d3baf8c..1294a77 100644
          shutil.copy(WEB / module, DIST / module)
      version: str = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 diff --git a/web/index.html b/web/index.html
-index ae1a68d..a33ce8d 100644
+index ae1a68d..cae1e2e 100644
 --- a/web/index.html
 +++ b/web/index.html
 @@ -70,6 +70,20 @@
@@ -1945,7 +1945,7 @@ index ae1a68d..a33ce8d 100644
      </style>
  </head>
  <body>
-@@ -78,10 +92,42 @@
+@@ -78,10 +92,43 @@
              <h1>OpenMATB <span class="version">v{{VERSION}}</span></h1>
              <p class="subtitle">Julien.Cegarra@univ-jfc.fr</p>
  
@@ -1962,7 +1962,7 @@ index ae1a68d..a33ce8d 100644
 +                <p class="lead">다중과업 수행 연구에 참여해 주셔서 감사합니다. 약 <strong>15분</strong> 걸리며 중간에 멈출 수 없으니, 방해받지 않는 시간에 해 주세요. 테스트가 모두 종료될 때까지 <strong>Esc는 절대 누르지 마세요.</strong></p>
 +                <ul class="study-list">
 +                    <li><strong>PC</strong>(노트북 포함), <strong>마우스</strong>, 키보드, <strong>스피커나 이어폰</strong>이 필요합니다.</li>
-+                    <li><strong>Chrome</strong> 또는 <strong>Edge</strong> 브라우저를 써 주세요.</li>
++                    <li><strong>Chrome</strong> 또는 <strong>Edge</strong> 브라우저를 써 주세요. 브라우저 창을 <strong>최대화</strong>한 상태에서 시작해 주세요.</li>
 +                    <li>이 페이지는 이름이나 연락처를 묻지 않습니다. 끝에 나오는 <strong>결과 코드</strong>가 설문지에 자동으로 들어가 함께 제출됩니다.</li>
 +                    <li><strong>만 19세 이상</strong>만 참여할 수 있습니다. 한 사람이 <strong>한 번만</strong> 참여해 주세요.</li>
 +                    <li>언제든 창을 닫아 참여를 그만둘 수 있습니다.</li>
@@ -1978,6 +1978,7 @@ index ae1a68d..a33ce8d 100644
 +                </div>
 +                <p id="sound-voice" class="hint"></p>
 +                <label class="inline"><input id="agree" type="checkbox"> <span>위 내용을 읽었고 참여에 동의합니다.</span></label>
++                <p id="size-warning" class="notice warning" hidden>브라우저 창이 너무 작습니다. 창을 최대화하면 시작 버튼이 나타납니다.</p>
 +            </section>
 +
              <label for="lang" data-i18n="language">Language</label>
@@ -1988,7 +1989,7 @@ index ae1a68d..a33ce8d 100644
              </select>
  
              <label for="mode" data-i18n="mode">Mode</label>
-@@ -123,6 +169,13 @@
+@@ -123,6 +170,13 @@
              <h1 data-i18n="session_ended">Session ended</h1>
              <p class="subtitle"><span data-i18n="log_file">The log file</span> <strong id="end-file"></strong></p>
              <ul id="end-destinations" class="destinations" aria-live="polite"></ul>
@@ -2277,7 +2278,7 @@ index 0000000..8ae9a5a
 +};
 +window.MouseTracking = MouseTracking;
 diff --git a/web/openmatb.js b/web/openmatb.js
-index e26ec0b..5a2d283 100644
+index e26ec0b..3bf7437 100644
 --- a/web/openmatb.js
 +++ b/web/openmatb.js
 @@ -15,6 +15,8 @@ import { connectScorm } from "./scorm.js";
@@ -2326,7 +2327,7 @@ index e26ec0b..5a2d283 100644
  // ?lang= in the URL, otherwise the first browser language OpenMATB is translated in, otherwise English
  function detectLanguage() {
      const requested = new URLSearchParams(location.search).get("lang");
-@@ -359,6 +391,199 @@ checkBrowser();
+@@ -359,6 +391,207 @@ checkBrowser();
  // ?demo=1 (Demo tab of the website): runs the demo scenario, and nothing is recorded
  const DEMO = new URLSearchParams(location.search).get("demo") === "1";
  const DEMO_SCENARIO = "demo.txt";
@@ -2338,6 +2339,7 @@ index e26ec0b..5a2d283 100644
 +const STUDY_SCENARIO = "korean/study.txt";
 +const SAMPLE_PROMPT = "에이, 비, 씨, 하나, 둘, 삼, 에이, 비, 씨, 하나, 둘, 삼, 무전기, 컴, 원, 주파수, 하나, 둘, 여섯, 쩜, 오.";
 +let soundChecked = false;
++const MIN_WINDOW = [800, 480]; // CSS pixels: a maximized window of a 1366x768 laptop at 125 % scaling is about 1093x490
 +
 +// Questions answered before the test (they go into the result code): propensity to trust automation, 6 items
 +// (Merritt et al., 2013; researcher's translation, t2 reverse-keyed), and whether the person did the test before.
@@ -2443,7 +2445,9 @@ index e26ec0b..5a2d283 100644
 +    $("lang").value = "ko_KR";
 +    translatePage();
 +    $("study").hidden = false;
-+    $("fullscreen").checked = true;
++    // No full screen in the study: leaving it (Esc) resized the tasks in the middle of the session, and its "press
++    // Esc" notice added to the one of the pointer lock. The page asks for a maximized browser window instead.
++    $("fullscreen").checked = false;
 +    $("sound-play").addEventListener("click", () => {
 +        const voice = KoreanTTS.voiceName();
 +        $("sound-voice").textContent = !KoreanTTS.supported
@@ -2458,9 +2462,14 @@ index e26ec0b..5a2d283 100644
 +    if (mobile) {
 +        setupMobileHandoff();
 +    }
++    // A window too small for the tasks (they are scaled to it): ask to maximize it
++    const bigEnough = () => window.innerWidth >= MIN_WINDOW[0] && window.innerHeight >= MIN_WINDOW[1];
 +    const showStart = () => {
-+        $("start").hidden = mobile || !(soundChecked && $("agree").checked && preQuestionsDone());
++        const ready = soundChecked && $("agree").checked && preQuestionsDone();
++        $("size-warning").hidden = mobile || !ready || bigEnough();
++        $("start").hidden = mobile || !ready || !bigEnough();
 +    };
++    window.addEventListener("resize", showStart);
 +    buildPreQuestions(showStart);
 +    $("sound-ok").addEventListener("click", () => {
 +        soundChecked = true;
@@ -2526,7 +2535,7 @@ index e26ec0b..5a2d283 100644
  // config.ini values of the demo: no session number to acknowledge, and the session is not sent anywhere
  const DEMO_CONFIG = { display_session_number: "False", web_session_output: "none" };
  
-@@ -427,10 +652,23 @@ async function returnToCourse() {
+@@ -427,10 +660,23 @@ async function returnToCourse() {
  }
  
  async function loadFonts() {
@@ -2554,7 +2563,7 @@ index e26ec0b..5a2d283 100644
      }
  }
  
-@@ -527,7 +765,8 @@ async function importSession(pyodide, file, bytes) {
+@@ -527,7 +773,8 @@ async function importSession(pyodide, file, bytes) {
      pyodide.FS.writeFile(`${folder}/${file.name.replace(/\.gz$/i, "")}`, new Uint8Array(csv));
  }
  
@@ -2564,7 +2573,7 @@ index e26ec0b..5a2d283 100644
      status("loading_failed", String(error));
      throw error;
  });
-@@ -631,6 +870,12 @@ $("mode").addEventListener("change", () => {
+@@ -631,6 +878,12 @@ $("mode").addEventListener("change", () => {
  $("start").addEventListener("click", async () => {
      // Everything that needs the user gesture must happen before the first await
      const wantsFullscreen = $("fullscreen").checked;
@@ -2577,7 +2586,7 @@ index e26ec0b..5a2d283 100644
      const fullscreen = wantsFullscreen ? document.documentElement.requestFullscreen().catch(() => {}) : null;
  
      const params = new URLSearchParams(location.search);
-@@ -639,6 +884,9 @@ $("start").addEventListener("click", async () => {
+@@ -639,6 +892,9 @@ $("start").addEventListener("click", async () => {
      if (DEMO && !params.has("scenario")) {
          params.set("scenario", DEMO_SCENARIO);
      }
@@ -2587,7 +2596,7 @@ index e26ec0b..5a2d283 100644
      history.replaceState(null, "", `?${params}`);
  
      const file = $("mode").value === "replay" ? $("session-file").files[0] : undefined;
-@@ -688,6 +936,14 @@ $("start").addEventListener("click", async () => {
+@@ -688,6 +944,14 @@ $("start").addEventListener("click", async () => {
      }
      status(null);
      try {
@@ -2602,7 +2611,7 @@ index e26ec0b..5a2d283 100644
          await pyodide.runPythonAsync(`import runpy; runpy.run_path("main.py", run_name="__main__")`);
          $("pygletCanvas").focus();
      } catch (error) {
-@@ -729,6 +985,7 @@ function destinationItem(text, ok) {
+@@ -729,6 +993,7 @@ function destinationItem(text, ok) {
  
  // Dispatched by core.logger.Logger.end_session(), with the path of the session file: download it and/or send it
  document.addEventListener("openmatb-end", async (event) => {
@@ -2610,7 +2619,7 @@ index e26ec0b..5a2d283 100644
      if (document.fullscreenElement) {
          document.exitFullscreen();
      }
-@@ -751,6 +1008,10 @@ document.addEventListener("openmatb-end", async (event) => {
+@@ -751,6 +1016,10 @@ document.addEventListener("openmatb-end", async (event) => {
          document.querySelector('#end [data-i18n="kept_in_browser"]').hidden = true;
          return;
      }
