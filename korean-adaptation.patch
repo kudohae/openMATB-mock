@@ -31,6 +31,17 @@ index 9c25899..cbd7bbf 100644
  # Web version: psychophysiology (see "Psychophysiology in the browser" in README.md)
  # parallelport plugin: write its values to a USB trigger box, whose serial port is chosen on the start page
  # (Chrome or Edge: Web Serial API)
+diff --git a/core/error.py b/core/error.py
+index a3fc466..b9e5d30 100644
+--- a/core/error.py
++++ b/core/error.py
+@@ -47,4 +47,5 @@ class Errors:
+ 
+                 title: str = _("Warning") if not self.some_fatals else _("Error(s)")
+                 continue_key: str | None = None if self.some_fatals else "SPACE"
+-                Window.MainWindow.open_modal_window(pass_list, title=title, continue_key=continue_key, exit_key="Q")
++                # Korean adaptation: P to exit (Q is the key of pump 1)
++                Window.MainWindow.open_modal_window(pass_list, title=title, continue_key=continue_key, exit_key="P")
 diff --git a/core/korean_score.py b/core/korean_score.py
 new file mode 100644
 index 0000000..fa556a4
@@ -532,6 +543,20 @@ index b2f7f4a..fe185ae 100644
      def _get_feedback_color(self) -> tuple[int, int, int, int]:
          shape = self.vertex["feedback_line_0"]
          return (*shape.color[:3], shape.opacity)
+diff --git a/core/window.py b/core/window.py
+index 91006b3..78b1a93 100644
+--- a/core/window.py
++++ b/core/window.py
+@@ -357,7 +357,8 @@ class Window(Window):
+     def exit_prompt(self) -> None:
+         if HEADLESS_MODE:
+             return
+-        self.modal_dialog = ModalDialog(self, _("You hit the Escape key"), title=_("Exit OpenMATB?"), exit_key="q")
++        # Korean adaptation: P to exit (Q is the key of pump 1, pressed all along task 2)
++        self.modal_dialog = ModalDialog(self, _("You hit the Escape key"), title=_("Exit OpenMATB?"), exit_key="p")
+ 
+     def pause_prompt(self) -> None:
+         if HEADLESS_MODE:
 diff --git a/includes/instructions/korean/01_welcome.txt b/includes/instructions/korean/01_welcome.txt
 new file mode 100644
 index 0000000..7cf67d3
