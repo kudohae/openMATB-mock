@@ -686,10 +686,10 @@ index 0000000..5ecb37e
 +<p>준비되면 스페이스 바를 누르세요.</p>
 diff --git a/includes/scenarios/korean/make_study.py b/includes/scenarios/korean/make_study.py
 new file mode 100644
-index 0000000..655d9cb
+index 0000000..7b0b097
 --- /dev/null
 +++ b/includes/scenarios/korean/make_study.py
-@@ -0,0 +1,210 @@
+@@ -0,0 +1,211 @@
 +"""Generate study.txt (Korean study scenario) with its scoring windows (PHASES line, scenario seconds).
 +
 +Task 1 (like the multitasking subtest of the Air Force pilot aptitude test K-PAT): tracking and communications at
@@ -811,17 +811,18 @@ index 0000000..655d9cb
 +note("Tutorial: tracking and communications together (40 s)")
 +ev(T, "track", "resume")
 +guide(T, "A4_both.txt", "center")
-+ev(T + 6, "communications", "radioprompt", "own")
++ev(T + 1, "communications", "radioprompt", "own")  # Its response window must end before the scored block
 +T += 40
 +comm_tutorial_feedback(T, False)
 +
 +A_START = T
 +note("Task 1: scored block (150 s)")
 +guide(T, "A5_main.txt", "center")
-+# A prompt lasts about 15 s, then 20 s to respond: a new prompt never cuts the previous one
-+for sec in (8, 38, 68, 104):
++# Prompts 18 s apart: a prompt (2 s of silence, then about 12-15 s of speech) is over before the next one starts
++# (a new prompt cuts the one still spoken). The last own prompt (speech, then 20 s to respond) ends within the block.
++for sec in (4, 40, 76, 112):
 +    ev(A_START + sec, "communications", "radioprompt", "own")
-+for sec in (26, 56, 88, 125):
++for sec in (22, 58, 94, 130):
 +    ev(A_START + sec, "communications", "radioprompt", "other")
 +A_END = A_START + 150
 +
@@ -883,7 +884,7 @@ index 0000000..655d9cb
 +for sec, gauge, side, auto in SYSMON:
 +    sysmon_failure(B_START + sec, gauge, auto, side)
 +# Communications: 8 own and 4 other prompts, not within 6 s of a malfunction
-+for sec in (8, 46, 90, 116, 156, 201, 226, 262):
++for sec in (8, 48, 90, 116, 156, 201, 226, 262):  # At least 18 s after an "other" prompt
 +    ev(B_START + sec, "communications", "radioprompt", "own")
 +for sec in (30, 72, 138, 182):
 +    ev(B_START + sec, "communications", "radioprompt", "other")
@@ -902,7 +903,7 @@ index 0000000..655d9cb
 +print(f"study.txt: {len(lines)} lines, task 1 {A_START}-{A_END} s, task 2 block {B_START}-{B_END} s")
 diff --git a/includes/scenarios/korean/study.txt b/includes/scenarios/korean/study.txt
 new file mode 100644
-index 0000000..b0e1c3c
+index 0000000..2a84a74
 --- /dev/null
 +++ b/includes/scenarios/korean/study.txt
 @@ -0,0 +1,219 @@
@@ -984,7 +985,7 @@ index 0000000..b0e1c3c
 +0:01:41;guide;highlightbox;0,0,1,1
 +0:01:41;guide;filename;korean/A4_both.txt
 +0:01:41;guide;start
-+0:01:47;communications;radioprompt;own
++0:01:42;communications;radioprompt;own
 +0:02:21;communications;feedbacks-positive-active;False
 +0:02:21;communications;feedbacks-negative-active;False
 +
@@ -994,14 +995,14 @@ index 0000000..b0e1c3c
 +0:02:21;guide;highlightbox;0,0,1,1
 +0:02:21;guide;filename;korean/A5_main.txt
 +0:02:21;guide;start
-+0:02:29;communications;radioprompt;own
-+0:02:59;communications;radioprompt;own
-+0:03:29;communications;radioprompt;own
-+0:04:05;communications;radioprompt;own
-+0:02:47;communications;radioprompt;other
-+0:03:17;communications;radioprompt;other
-+0:03:49;communications;radioprompt;other
-+0:04:26;communications;radioprompt;other
++0:02:25;communications;radioprompt;own
++0:03:01;communications;radioprompt;own
++0:03:37;communications;radioprompt;own
++0:04:13;communications;radioprompt;own
++0:02:43;communications;radioprompt;other
++0:03:19;communications;radioprompt;other
++0:03:55;communications;radioprompt;other
++0:04:31;communications;radioprompt;other
 +
 +# Task 2: tutorial
 +0:04:51;track;pause
@@ -1102,7 +1103,7 @@ index 0000000..b0e1c3c
 +0:11:37;sysmon;automaticsolver;True
 +0:11:37;sysmon;scales-1-failure;down
 +0:07:15;communications;radioprompt;own
-+0:07:53;communications;radioprompt;own
++0:07:55;communications;radioprompt;own
 +0:08:37;communications;radioprompt;own
 +0:09:03;communications;radioprompt;own
 +0:09:43;communications;radioprompt;own
@@ -1860,7 +1861,7 @@ index d3baf8c..1294a77 100644
          shutil.copy(WEB / module, DIST / module)
      version: str = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 diff --git a/web/index.html b/web/index.html
-index ae1a68d..ced8346 100644
+index ae1a68d..a33ce8d 100644
 --- a/web/index.html
 +++ b/web/index.html
 @@ -70,6 +70,20 @@
@@ -1898,7 +1899,7 @@ index ae1a68d..ced8346 100644
 +                    <p id="m-done" class="hint"></p>
 +                    <p class="hint">PC 주소창에 직접 입력해도 됩니다: <strong id="m-url"></strong></p>
 +                </div>
-+                <p class="lead">다중과업 수행 연구에 참여해 주셔서 감사합니다. 약 <strong>20분</strong> 걸리며 중간에 멈출 수 없으니, 방해받지 않는 시간에 해 주세요. 테스트가 모두 종료될 때까지 <strong>Esc는 절대 누르지 마세요.</strong></p>
++                <p class="lead">다중과업 수행 연구에 참여해 주셔서 감사합니다. 약 <strong>15분</strong> 걸리며 중간에 멈출 수 없으니, 방해받지 않는 시간에 해 주세요. 테스트가 모두 종료될 때까지 <strong>Esc는 절대 누르지 마세요.</strong></p>
 +                <ul class="study-list">
 +                    <li><strong>PC</strong>(노트북 포함), <strong>마우스</strong>, 키보드, <strong>스피커나 이어폰</strong>이 필요합니다.</li>
 +                    <li><strong>Chrome</strong> 또는 <strong>Edge</strong> 브라우저를 써 주세요.</li>
