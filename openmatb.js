@@ -399,6 +399,7 @@ const STUDY = !DEMO && QUERY.get("admin") !== "1" && !QUERY.get("cmi5") && !QUER
 const STUDY_SCENARIO = "korean/study.txt";
 const SAMPLE_PROMPT = "에이, 비, 씨, 하나, 둘, 삼, 에이, 비, 씨, 하나, 둘, 삼, 무전기, 컴, 원, 주파수, 하나, 둘, 여섯, 쩜, 오.";
 let soundChecked = false;
+const MIN_WINDOW = [800, 480]; // CSS pixels: a maximized window of a 1366x768 laptop at 125 % scaling is about 1093x490
 
 // Questions answered before the test (they go into the result code): propensity to trust automation, 6 items
 // (Merritt et al., 2013; researcher's translation, t2 reverse-keyed), and whether the person did the test before.
@@ -504,7 +505,9 @@ function setupStudyPage() {
     $("lang").value = "ko_KR";
     translatePage();
     $("study").hidden = false;
-    $("fullscreen").checked = true;
+    // No full screen in the study: leaving it (Esc) resized the tasks in the middle of the session, and its "press
+    // Esc" notice added to the one of the pointer lock. The page asks for a maximized browser window instead.
+    $("fullscreen").checked = false;
     $("sound-play").addEventListener("click", () => {
         const voice = KoreanTTS.voiceName();
         $("sound-voice").textContent = !KoreanTTS.supported
@@ -519,9 +522,14 @@ function setupStudyPage() {
     if (mobile) {
         setupMobileHandoff();
     }
+    // A window too small for the tasks (they are scaled to it): ask to maximize it
+    const bigEnough = () => window.innerWidth >= MIN_WINDOW[0] && window.innerHeight >= MIN_WINDOW[1];
     const showStart = () => {
-        $("start").hidden = mobile || !(soundChecked && $("agree").checked && preQuestionsDone());
+        const ready = soundChecked && $("agree").checked && preQuestionsDone();
+        $("size-warning").hidden = mobile || !ready || bigEnough();
+        $("start").hidden = mobile || !ready || !bigEnough();
     };
+    window.addEventListener("resize", showStart);
     buildPreQuestions(showStart);
     $("sound-ok").addEventListener("click", () => {
         soundChecked = true;
