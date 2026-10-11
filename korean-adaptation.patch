@@ -240,10 +240,10 @@ index 0000000..fa556a4
 +    return CODE_PREFIX + base64.b64encode(payload.encode("ascii")).decode("ascii")
 diff --git a/core/korean_tts.py b/core/korean_tts.py
 new file mode 100644
-index 0000000..96388fe
+index 0000000..2e1299f
 --- /dev/null
 +++ b/core/korean_tts.py
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,103 @@
 +# Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
 +# Institut National Universitaire Champollion (Albi, France).
 +# License : CeCILL, version 2.1 (see the LICENSE file)
@@ -255,8 +255,7 @@ index 0000000..96388fe
 +The recorded voices of OpenMATB are English or French. With voiceidiom=korean, the prompt is read by the browser
 +speech synthesis (web/korean_tts.js) with a Korean voice. TTSPlayer has the subset of the player API used by the
 +communications plugin: the prompt is over when `source` becomes None (so the response timer starts at the end of the
-+spoken message, as with the recorded voices). A prompt is read in two utterances (callsign twice, then radio and
-+frequency): some browser voices stop a single long utterance (about 15 s) without reporting its end.
++spoken message, as with the recorded voices).
 +"""
 +
 +from __future__ import annotations
@@ -279,7 +278,6 @@ index 0000000..96388fe
 +)
 +DIGITS: dict[str, str] = dict(zip("0123456789", "공 하나 둘 삼 넷 오 여섯 칠 팔 아홉".split()))
 +RADIOS: dict[str, str] = {"NAV_1": "내브, 원", "NAV_2": "내브, 투", "COM_1": "컴, 원", "COM_2": "컴, 투"}
-+PART_SEPARATOR: str = " | "  # web/korean_tts.js speaks each part as a separate utterance
 +
 +
 +def say_chars(text: str) -> list[str]:
@@ -287,12 +285,12 @@ index 0000000..96388fe
 +
 +
 +def prompt_text(callsign: str, radio_name: str, freq: float) -> str:
-+    """Every character is a separate word, so the voice pauses after each one. Two parts, e.g.
-+    "에이치, 에스, 알, 둘, 오, 아홉, 에이치, 에스, 알, 둘, 오, 아홉. | 무전기, 컴, 원, 주파수, 하나, 공, 아홉, 쩜, 삼." """
++    """Every character is a separate word, so the voice pauses after each one, e.g.
++    "에이치, 에스, 알, 둘, 오, 아홉, 에이치, 에스, 알, 둘, 오, 아홉, 무전기, 컴, 원, 주파수, 하나, 공, 아홉, 쩜, 삼." """
 +    call: list[str] = say_chars(callsign)
 +    digits: list[str] = ["쩜" if c == "." else DIGITS.get(c, c) for c in str(freq)]
-+    radio: list[str] = ["무전기", RADIOS.get(radio_name.upper(), radio_name), "주파수"] + digits
-+    return ", ".join(call + call) + "." + PART_SEPARATOR + ", ".join(radio) + "."
++    words: list[str] = call + call + ["무전기", RADIOS.get(radio_name.upper(), radio_name), "주파수"] + digits
++    return ", ".join(words) + "."
 +
 +
 +def _tts() -> Any:
@@ -1946,20 +1944,22 @@ index ae1a68d..a33ce8d 100644
          </div>
 diff --git a/web/korean_tts.js b/web/korean_tts.js
 new file mode 100644
-index 0000000..4d5d542
+index 0000000..7daabc8
 --- /dev/null
 +++ b/web/korean_tts.js
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,73 @@
 +// Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
 +// Institut National Universitaire Champollion (Albi, France).
 +// License : CeCILL, version 2.1 (see the LICENSE file)
 +//
 +// Korean adaptation (2026): Korean voice of the communications task, read by the browser speech synthesis.
 +// Used by core/korean_tts.py (TTSPlayer) through window.KoreanTTS. Python polls isDone(id): the response time of a
-+// prompt starts when its message has been spoken, as with the recorded voices. The parts of a text separated by "|"
-+// are separate utterances (some voices stop a single utterance longer than about 15 s without its "end" event).
++// prompt starts when its message has been spoken, as with the recorded voices.
++// Chrome's Google voices stop an utterance after about 15 s without its "end" event: an utterance still spoken after
++// 13 s is paused and resumed at once, which keeps it going (shorter prompts are not touched).
 +
 +const supported = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
++const KEEP_ALIVE_MS = 13000;
 +let voice = null;
 +let lastId = 0;
 +const done = new Set();
@@ -1992,20 +1992,23 @@ index 0000000..4d5d542
 +            done.add(id);
 +            return id;
 +        }
-+        const parts = text.split("|").map((part) => part.trim()).filter(Boolean);
++        const utterance = new SpeechSynthesisUtterance(text);
++        utterance.lang = "ko-KR";
++        if (voice || pickVoice()) {
++            utterance.voice = voice;
++        }
++        utterance.rate = rate;
++        utterance.onend = utterance.onerror = () => done.add(id);
 +        speechSynthesis.cancel();
-+        parts.forEach((part, i) => {
-+            const utterance = new SpeechSynthesisUtterance(part);
-+            utterance.lang = "ko-KR";
-+            if (voice || pickVoice()) {
-+                utterance.voice = voice;
++        speechSynthesis.speak(utterance);
++        const keepAlive = setInterval(() => {
++            if (done.has(id) || id !== lastId) {
++                clearInterval(keepAlive);
++            } else if (speechSynthesis.speaking && !speechSynthesis.paused) {
++                speechSynthesis.pause();
++                speechSynthesis.resume();
 +            }
-+            utterance.rate = rate;
-+            if (i === parts.length - 1) { // The message is over when its last part is
-+                utterance.onend = utterance.onerror = () => done.add(id);
-+            }
-+            speechSynthesis.speak(utterance);
-+        });
++        }, KEEP_ALIVE_MS);
 +        // Safety: some voices never fire "end" (the prompt would never be over)
 +        setTimeout(() => done.add(id), 4000 + text.length * 250);
 +        return id;
@@ -2173,7 +2176,7 @@ index 0000000..9261231
 +};
 +window.MouseTracking = MouseTracking;
 diff --git a/web/openmatb.js b/web/openmatb.js
-index e26ec0b..a8f923f 100644
+index e26ec0b..0aed568 100644
 --- a/web/openmatb.js
 +++ b/web/openmatb.js
 @@ -15,6 +15,8 @@ import { connectScorm } from "./scorm.js";
@@ -2232,7 +2235,7 @@ index e26ec0b..a8f923f 100644
 +const QUERY = new URLSearchParams(location.search);
 +const STUDY = !DEMO && QUERY.get("admin") !== "1" && !QUERY.get("cmi5") && !QUERY.get("endpoint");
 +const STUDY_SCENARIO = "korean/study.txt";
-+const SAMPLE_PROMPT = "에이, 비, 씨, 하나, 둘, 삼, 에이, 비, 씨, 하나, 둘, 삼. | 무전기, 컴, 원, 주파수, 하나, 둘, 여섯, 쩜, 오.";
++const SAMPLE_PROMPT = "에이, 비, 씨, 하나, 둘, 삼, 에이, 비, 씨, 하나, 둘, 삼, 무전기, 컴, 원, 주파수, 하나, 둘, 여섯, 쩜, 오.";
 +let soundChecked = false;
 +
 +// Questions answered before the test (they go into the result code): propensity to trust automation, 6 items

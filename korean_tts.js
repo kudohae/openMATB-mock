@@ -4,10 +4,12 @@
 //
 // Korean adaptation (2026): Korean voice of the communications task, read by the browser speech synthesis.
 // Used by core/korean_tts.py (TTSPlayer) through window.KoreanTTS. Python polls isDone(id): the response time of a
-// prompt starts when its message has been spoken, as with the recorded voices. The parts of a text separated by "|"
-// are separate utterances (some voices stop a single utterance longer than about 15 s without its "end" event).
+// prompt starts when its message has been spoken, as with the recorded voices.
+// Chrome's Google voices stop an utterance after about 15 s without its "end" event: an utterance still spoken after
+// 13 s is paused and resumed at once, which keeps it going (shorter prompts are not touched).
 
 const supported = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+const KEEP_ALIVE_MS = 13000;
 let voice = null;
 let lastId = 0;
 const done = new Set();
@@ -40,20 +42,23 @@ export const KoreanTTS = {
             done.add(id);
             return id;
         }
-        const parts = text.split("|").map((part) => part.trim()).filter(Boolean);
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = "ko-KR";
+        if (voice || pickVoice()) {
+            utterance.voice = voice;
+        }
+        utterance.rate = rate;
+        utterance.onend = utterance.onerror = () => done.add(id);
         speechSynthesis.cancel();
-        parts.forEach((part, i) => {
-            const utterance = new SpeechSynthesisUtterance(part);
-            utterance.lang = "ko-KR";
-            if (voice || pickVoice()) {
-                utterance.voice = voice;
+        speechSynthesis.speak(utterance);
+        const keepAlive = setInterval(() => {
+            if (done.has(id) || id !== lastId) {
+                clearInterval(keepAlive);
+            } else if (speechSynthesis.speaking && !speechSynthesis.paused) {
+                speechSynthesis.pause();
+                speechSynthesis.resume();
             }
-            utterance.rate = rate;
-            if (i === parts.length - 1) { // The message is over when its last part is
-                utterance.onend = utterance.onerror = () => done.add(id);
-            }
-            speechSynthesis.speak(utterance);
-        });
+        }, KEEP_ALIVE_MS);
         // Safety: some voices never fire "end" (the prompt would never be over)
         setTimeout(() => done.add(id), 4000 + text.length * 250);
         return id;
