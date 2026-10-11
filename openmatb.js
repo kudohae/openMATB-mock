@@ -397,7 +397,7 @@ const DEMO_SCENARIO = "demo.txt";
 const QUERY = new URLSearchParams(location.search);
 const STUDY = !DEMO && QUERY.get("admin") !== "1" && !QUERY.get("cmi5") && !QUERY.get("endpoint");
 const STUDY_SCENARIO = "korean/study.txt";
-const SAMPLE_PROMPT = "에이, 비, 씨, 하나, 둘, 삼, 에이, 비, 씨, 하나, 둘, 삼. | 무전기, 컴, 원, 주파수, 하나, 둘, 여섯, 쩜, 오.";
+const SAMPLE_PROMPT = "에이, 비, 씨, 하나, 둘, 삼, 에이, 비, 씨, 하나, 둘, 삼, 무전기, 컴, 원, 주파수, 하나, 둘, 여섯, 쩜, 오.";
 let soundChecked = false;
 
 // Questions answered before the test (they go into the result code): propensity to trust automation, 6 items
