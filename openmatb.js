@@ -552,12 +552,15 @@ async function showStudyResult(pyodide, sessionPath) {
     try {
         pyodide.globals.set("_session_path", sessionPath);
         pyodide.globals.set("_pre_answers", JSON.stringify(preAnswers));
+        pyodide.globals.set("_aborted", abortReason || "");
         code = pyodide.runPython(`
 import json
 from pathlib import Path
 from core.korean_score import result_code, score_file
 _result = score_file(_session_path, Path("${APP_DIR}/includes/scenarios/korean/study.txt"))
 _result.update({f"pre_{k}": v for k, v in json.loads(_pre_answers).items()})
+if _aborted:
+    _result["aborted"] = _aborted
 result_code(_result)`);
     } catch (error) {
         console.error(error);
@@ -991,8 +994,71 @@ function destinationItem(text, ok) {
     return item;
 }
 
+// Korean adaptation: the tasks can no longer go on. "screen": the browser dropped the WebGL context of the canvas (GPU
+// reset, graphics switch...), the tasks go on but nothing is drawn any more (pyglet cannot restore it). "freeze": an
+// error stopped OpenMATB (core/platform.py report_loop_errors). Instead of a black or frozen screen, the participant
+// is told so and gets the result code so far, which records the reason ("aborted"); the visit log gets it too.
+let abortReason = null;
+
+function showCrash(kind, detail) {
+    if (!STUDY || abortReason || !$("end").hidden || $("pygletCanvas").hidden) {
+        return;
+    }
+    abortReason = kind;
+    console.error("[OpenMATB] the session cannot go on:", kind, detail || "");
+    logVisit(`오류(${kind})`);
+    MouseTracking.release();
+    const box = document.createElement("div");
+    box.id = "crash-notice";
+    Object.assign(box.style, {
+        position: "fixed", inset: "0", zIndex: "2000", display: "flex", alignItems: "center", justifyContent: "center",
+        background: "rgba(240, 240, 240, 0.97)", font: "17px system-ui, sans-serif", color: "#323232",
+    });
+    const panel = document.createElement("div");
+    Object.assign(panel.style, { maxWidth: "560px", padding: "28px 32px", background: "#fff", border: "1px solid #d6d6d6",
+        borderRadius: "8px", lineHeight: "1.6", wordBreak: "keep-all" });
+    const text = document.createElement("p");
+    text.textContent = kind === "화면"
+        ? "화면 표시에 오류가 생겨 과제를 계속할 수 없습니다(그래픽 오류). 죄송합니다."
+        : "오류로 과제가 멈춰 계속할 수 없습니다. 죄송합니다.";
+    const text2 = document.createElement("p");
+    text2.textContent = "아래 버튼을 누르면 지금까지의 결과 코드가 나옵니다. 설문에 그대로 제출해 주세요.";
+    const button = document.createElement("button");
+    button.textContent = "지금까지의 결과 코드 받기";
+    button.onclick = async () => {
+        button.disabled = true;
+        const pyodide = await ready;
+        try {
+            // "screen": the scheduler still runs, it ends the session as usual. "freeze": end it from here.
+            pyodide.runPython(kind === "화면"
+                ? "from core.window import Window\nWindow.MainWindow.alive = False"
+                : "from core.logger import get_logger\nget_logger().end_session()");
+        } catch (error) {
+            console.error(error);
+        }
+        setTimeout(() => { // Nothing came: end anyway from here
+            if ($("end").hidden) {
+                try {
+                    pyodide.runPython("from core.logger import get_logger\nget_logger().end_session()");
+                } catch (error) {
+                    console.error(error);
+                }
+            }
+        }, 3000);
+    };
+    panel.append(text, text2, button);
+    box.append(panel);
+    document.body.append(box);
+}
+$("pygletCanvas").addEventListener("webglcontextlost", (event) => {
+    event.preventDefault();
+    showCrash("화면", "WebGL context lost");
+});
+document.addEventListener("openmatb-crash", (event) => showCrash("멈춤", event.detail));
+
 // Dispatched by core.logger.Logger.end_session(), with the path of the session file: download it and/or send it
 document.addEventListener("openmatb-end", async (event) => {
+    document.getElementById("crash-notice")?.remove();
     MouseTracking.release();
     if (document.fullscreenElement) {
         document.exitFullscreen();
@@ -1017,7 +1083,7 @@ document.addEventListener("openmatb-end", async (event) => {
         return;
     }
     if (STUDY) {
-        logVisit("완료");
+        logVisit(abortReason ? `완료(${abortReason} 오류 후)` : "완료");
         await showStudyResult(pyodide, event.detail);
     }
     const output = sessionOutput || new SessionOutput(sessionOutputSettings(""));

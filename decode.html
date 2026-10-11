@@ -37,6 +37,7 @@
     <li><b>B_cm_hit / miss / fa / bad_radio / bad_freq / bad_radio_freq / B_cm_rt</b>: 교신(내 호출 8건). 정답 / 무응답 / 남의 호출에 응답 / 무전기 틀림 / 주파수 틀림 / 둘 다 틀림 / 정답의 평균 반응시간(ms, 음성이 끝난 뒤부터)</li>
     <li><b>B_rm_a / B_rm_b / B_rm</b>: 연료 관리. 탱크 A, B가 목표 범위 안에 있던 시간 비율(%)과 그 평균</li>
     <li><b>hidden</b>: 과업 중 다른 탭·창으로 나간 횟수(1 이상이면 검토) · <b>pointer_lost</b>: 추적 중 마우스 잠금이 풀린 횟수(Esc 등) · <b>freeze_ms</b>: 브라우저가 멈춘 시간 합계(ms, 수천 ms 이상이면 검토)</li>
+    <li><b>aborted</b>: 비어 있으면 정상 완료. "화면"(그래픽 오류로 화면이 꺼짐) 또는 "멈춤"(오류로 과제가 멈춤)이면 그 시점까지의 부분 결과이므로 제외 권장</li>
     <li><b>browser / voice / win_h</b>: 브라우저, 사용된 한국어 음성, 창 높이(픽셀). voice가 비어 있으면 음성이 안 나왔을 수 있으므로 제외 검토</li>
   </ul>
 </main>
@@ -53,7 +54,7 @@ const COLS = ["valid", "session", "browser", "voice", "win_h", "hidden", "pointe
   "B_rm_a", "B_rm_b", "B_rm",
   "A_trk_rms_h1", "A_trk_rms_h2", "A_cm_hit_o", "A_cm_hit_e", "B_sm_man_hit_o", "B_sm_man_hit_e",
   "B_trk_rms_h1", "B_trk_rms_h2", "B_cm_hit_o", "B_cm_hit_e",
-  "pre_t1", "pre_t2", "pre_t3", "pre_t4", "pre_t5", "pre_t6", "pre_before"];
+  "pre_t1", "pre_t2", "pre_t3", "pre_t4", "pre_t5", "pre_t6", "pre_before", "aborted"];
 const cell = v => v == null ? "" : /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
 let csv = "";
 document.getElementById("go").onclick = () => {
