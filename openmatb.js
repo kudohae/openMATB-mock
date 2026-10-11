@@ -936,6 +936,10 @@ $("start").addEventListener("click", async () => {
     }
     status(null);
     try {
+        if (STUDY) {
+            // One pause only in the study (mouse_tracking.js): no exit or pause dialog (read by core/study_gate.py)
+            pyodide.runPython("import os; os.environ['OPENMATB_STUDY'] = '1'");
+        }
         if (STUDY && QUERY.get("fast") === "1") {
             // Researcher check of the whole study (end page, result code): scenario time 10 times faster
             pyodide.runPython("import os; os.environ['OPENMATB_TIME_FACTOR'] = '10'"); // Read by core/study_gate.py

@@ -21,7 +21,7 @@ function canvas() {
 function makeOverlay() {
     overlay = document.createElement("div");
     overlay.id = "pointer-lock-overlay";
-    overlay.textContent = "마우스 고정이 풀려 과제가 잠시 멈췄습니다. 여기를 클릭하면 이어집니다.\n"
+    overlay.textContent = "과제가 잠시 멈췄습니다. 여기를 클릭하면 이어집니다.\n"
         + "Esc를 누르라는 알림이 떠도 Esc는 누르지 마세요.";
     Object.assign(overlay.style, {
         position: "fixed", left: "50%", top: "28%", transform: "translate(-50%, -50%)", zIndex: "1000",
@@ -132,6 +132,13 @@ for (const type of ["keydown", "keyup"]) {
         }
     });
 }
+// Another tab or window: the tasks pause whatever runs (the browser slows the page down), until a click
+document.addEventListener("visibilitychange", () => {
+    if (state.session && document.hidden) {
+        state.suspended = true;
+        refresh();
+    }
+});
 document.addEventListener("fullscreenchange", () => {
     if (state.session && !document.pointerLockElement) {
         lock();
