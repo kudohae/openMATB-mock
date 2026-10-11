@@ -240,10 +240,10 @@ index 0000000..fa556a4
 +    return CODE_PREFIX + base64.b64encode(payload.encode("ascii")).decode("ascii")
 diff --git a/core/korean_tts.py b/core/korean_tts.py
 new file mode 100644
-index 0000000..2e1299f
+index 0000000..96388fe
 --- /dev/null
 +++ b/core/korean_tts.py
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,105 @@
 +# Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
 +# Institut National Universitaire Champollion (Albi, France).
 +# License : CeCILL, version 2.1 (see the LICENSE file)
@@ -255,7 +255,8 @@ index 0000000..2e1299f
 +The recorded voices of OpenMATB are English or French. With voiceidiom=korean, the prompt is read by the browser
 +speech synthesis (web/korean_tts.js) with a Korean voice. TTSPlayer has the subset of the player API used by the
 +communications plugin: the prompt is over when `source` becomes None (so the response timer starts at the end of the
-+spoken message, as with the recorded voices).
++spoken message, as with the recorded voices). A prompt is read in two utterances (callsign twice, then radio and
++frequency): some browser voices stop a single long utterance (about 15 s) without reporting its end.
 +"""
 +
 +from __future__ import annotations
@@ -278,6 +279,7 @@ index 0000000..2e1299f
 +)
 +DIGITS: dict[str, str] = dict(zip("0123456789", "공 하나 둘 삼 넷 오 여섯 칠 팔 아홉".split()))
 +RADIOS: dict[str, str] = {"NAV_1": "내브, 원", "NAV_2": "내브, 투", "COM_1": "컴, 원", "COM_2": "컴, 투"}
++PART_SEPARATOR: str = " | "  # web/korean_tts.js speaks each part as a separate utterance
 +
 +
 +def say_chars(text: str) -> list[str]:
@@ -285,12 +287,12 @@ index 0000000..2e1299f
 +
 +
 +def prompt_text(callsign: str, radio_name: str, freq: float) -> str:
-+    """Every character is a separate word, so the voice pauses after each one, e.g.
-+    "에이치, 에스, 알, 둘, 오, 아홉, 에이치, 에스, 알, 둘, 오, 아홉, 무전기, 컴, 원, 주파수, 하나, 공, 아홉, 쩜, 삼." """
++    """Every character is a separate word, so the voice pauses after each one. Two parts, e.g.
++    "에이치, 에스, 알, 둘, 오, 아홉, 에이치, 에스, 알, 둘, 오, 아홉. | 무전기, 컴, 원, 주파수, 하나, 공, 아홉, 쩜, 삼." """
 +    call: list[str] = say_chars(callsign)
 +    digits: list[str] = ["쩜" if c == "." else DIGITS.get(c, c) for c in str(freq)]
-+    words: list[str] = call + call + ["무전기", RADIOS.get(radio_name.upper(), radio_name), "주파수"] + digits
-+    return ", ".join(words) + "."
++    radio: list[str] = ["무전기", RADIOS.get(radio_name.upper(), radio_name), "주파수"] + digits
++    return ", ".join(call + call) + "." + PART_SEPARATOR + ", ".join(radio) + "."
 +
 +
 +def _tts() -> Any:
@@ -384,7 +386,7 @@ index 836be25..b41aa8c 100644
      from pyglet.gl import Config
      from pyglet.media import Player as AudioPlayer
 diff --git a/core/scheduler.py b/core/scheduler.py
-index 4fcf6cf..8285553 100644
+index 4fcf6cf..a741ed6 100644
 --- a/core/scheduler.py
 +++ b/core/scheduler.py
 @@ -15,6 +15,7 @@ from core.clock import Clock
@@ -395,7 +397,26 @@ index 4fcf6cf..8285553 100644
  from core.joystick import joystick
  from core.logger import get_logger
  from core.platform import IS_WEB, browser_environment, notify_page
-@@ -132,9 +133,13 @@ class Scheduler:
+@@ -100,9 +101,17 @@ class Scheduler:
+         self._dialog_paused: bool = False
+         # Store the plugins paused by the modal dialog (those which were running when it opened)
+         self._dialog_paused_plugins: list[Any] = list()
++        self._pointer_paused: bool = False
+ 
+     def update(self, dt: float) -> None:
+-        if Window.MainWindow.modal_dialog is not None:
++        # Korean adaptation: the tasks also pause while the mouse pointer is not locked during tracking
++        pointer_paused: bool = study_gate.pointer_paused()
++        if pointer_paused != self._pointer_paused:
++            self._pointer_paused = pointer_paused
++            get_logger().log_manual_entry(
++                "Pointer lock lost: tasks paused" if pointer_paused else "Pointer locked: tasks resumed"
++            )
++        if Window.MainWindow.modal_dialog is not None or pointer_paused:
+             if not self._dialog_paused:
+                 # Pause only the running plugins, so that plugins already paused
+                 # (e.g. by a blocking plugin) are not resumed when the dialog closes
+@@ -132,9 +141,13 @@ class Scheduler:
          self.check_if_must_exit()
  
      def update_timers(self, dt: float) -> None:
@@ -410,7 +431,7 @@ index 4fcf6cf..8285553 100644
              get_logger().set_scenario_time(self.scenario_time)
          timing.set_tick(self.scenario_time, running=not self.is_scenario_time_paused())
  
-@@ -202,7 +207,10 @@ class Scheduler:
+@@ -202,7 +215,10 @@ class Scheduler:
                  if not self.is_scenario_time_paused():
                      self.pause_scenario()
                      self.paused_plugins = self.get_active_non_blocking_plugins()
@@ -424,10 +445,10 @@ index 4fcf6cf..8285553 100644
          elif active_blocking_plugin is None:
 diff --git a/core/study_gate.py b/core/study_gate.py
 new file mode 100644
-index 0000000..c81e7c4
+index 0000000..f62d15b
 --- /dev/null
 +++ b/core/study_gate.py
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,39 @@
 +# Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
 +# Institut National Universitaire Champollion (Albi, France).
 +# License : CeCILL, version 2.1 (see the LICENSE file)
@@ -439,15 +460,34 @@ index 0000000..c81e7c4
 +comm_hits: number of correct communications responses (HIT) by the participant so far.
 +skip_to: scenario time (s) the scheduler jumps to at its next update (the events in between are executed at once).
 +time_factor: speed of the scenario time (10 with ?fast=1 in the web page address, to check the study end quickly).
++pointer_paused(): the mouse pointer lock was lost while the tracking task needs it (web/mouse_tracking.js): the
++scheduler pauses the tasks, as with a dialog, until the pointer is locked again.
 +"""
 +
 +from __future__ import annotations
 +
 +import os
++import sys
++from typing import Any
 +
 +comm_hits: int = 0
 +skip_to: float | None = None
 +time_factor: float = float(os.environ.get("OPENMATB_TIME_FACTOR", "1"))
++
++_mouse_tracking: Any = None
++
++
++def pointer_paused() -> bool:
++    global _mouse_tracking
++    if sys.platform != "emscripten":
++        return False
++    if _mouse_tracking is None:
++        import js  # type: ignore[import-not-found]
++
++        _mouse_tracking = getattr(js.window, "MouseTracking", None)
++        if _mouse_tracking is None:
++            return False
++    return bool(_mouse_tracking.isSuspended())
 diff --git a/core/widgets/radio.py b/core/widgets/radio.py
 index b2f7f4a..fe185ae 100644
 --- a/core/widgets/radio.py
@@ -496,10 +536,10 @@ index b2f7f4a..fe185ae 100644
          return (*shape.color[:3], shape.opacity)
 diff --git a/includes/instructions/korean/01_welcome.txt b/includes/instructions/korean/01_welcome.txt
 new file mode 100644
-index 0000000..ae3a2cc
+index 0000000..7cf67d3
 --- /dev/null
 +++ b/includes/instructions/korean/01_welcome.txt
-@@ -0,0 +1,7 @@
+@@ -0,0 +1,9 @@
 +<h1>연구에 참여해 주셔서 감사합니다</h1>
 +
 +<p>이 과제는 프랑스 연구진이 공개한 다중과업 연구 도구 <strong>OpenMATB</strong>를 한국어로 옮긴 것입니다. 조종 경험이나 사전 지식은 필요 없습니다.</p>
@@ -507,6 +547,8 @@ index 0000000..ae3a2cc
 +<p>과제는 두 부분이며, 설명과 연습을 포함해 모두 <strong>약 15분</strong>입니다.<br>· <strong>과제 1</strong> : 추적과 교신<br>· <strong>과제 2</strong> : 과제 1 + 시스템 감시와 연료 관리</p>
 +
 +<p>왼손은 키보드, 오른손은 마우스에 두세요. 다른 창으로 가면 과제가 멈추니 끝날 때까지 이 화면에 머물러 주세요. 소리를 켜 두세요.</p>
++
++<p>테스트를 진행하는 동안 Esc를 누르라는 알림이 뜨면 무시하세요. <strong>Esc를 누르지 마세요.</strong></p>
 diff --git a/includes/instructions/korean/99_end.txt b/includes/instructions/korean/99_end.txt
 new file mode 100644
 index 0000000..a801751
@@ -646,10 +688,10 @@ index 0000000..5ecb37e
 +<p>준비되면 스페이스 바를 누르세요.</p>
 diff --git a/includes/scenarios/korean/make_study.py b/includes/scenarios/korean/make_study.py
 new file mode 100644
-index 0000000..655d9cb
+index 0000000..7b0b097
 --- /dev/null
 +++ b/includes/scenarios/korean/make_study.py
-@@ -0,0 +1,210 @@
+@@ -0,0 +1,211 @@
 +"""Generate study.txt (Korean study scenario) with its scoring windows (PHASES line, scenario seconds).
 +
 +Task 1 (like the multitasking subtest of the Air Force pilot aptitude test K-PAT): tracking and communications at
@@ -771,17 +813,18 @@ index 0000000..655d9cb
 +note("Tutorial: tracking and communications together (40 s)")
 +ev(T, "track", "resume")
 +guide(T, "A4_both.txt", "center")
-+ev(T + 6, "communications", "radioprompt", "own")
++ev(T + 1, "communications", "radioprompt", "own")  # Its response window must end before the scored block
 +T += 40
 +comm_tutorial_feedback(T, False)
 +
 +A_START = T
 +note("Task 1: scored block (150 s)")
 +guide(T, "A5_main.txt", "center")
-+# A prompt lasts about 15 s, then 20 s to respond: a new prompt never cuts the previous one
-+for sec in (8, 38, 68, 104):
++# Prompts 18 s apart: a prompt (2 s of silence, then about 12-15 s of speech) is over before the next one starts
++# (a new prompt cuts the one still spoken). The last own prompt (speech, then 20 s to respond) ends within the block.
++for sec in (4, 40, 76, 112):
 +    ev(A_START + sec, "communications", "radioprompt", "own")
-+for sec in (26, 56, 88, 125):
++for sec in (22, 58, 94, 130):
 +    ev(A_START + sec, "communications", "radioprompt", "other")
 +A_END = A_START + 150
 +
@@ -843,7 +886,7 @@ index 0000000..655d9cb
 +for sec, gauge, side, auto in SYSMON:
 +    sysmon_failure(B_START + sec, gauge, auto, side)
 +# Communications: 8 own and 4 other prompts, not within 6 s of a malfunction
-+for sec in (8, 46, 90, 116, 156, 201, 226, 262):
++for sec in (8, 48, 90, 116, 156, 201, 226, 262):  # At least 18 s after an "other" prompt
 +    ev(B_START + sec, "communications", "radioprompt", "own")
 +for sec in (30, 72, 138, 182):
 +    ev(B_START + sec, "communications", "radioprompt", "other")
@@ -862,7 +905,7 @@ index 0000000..655d9cb
 +print(f"study.txt: {len(lines)} lines, task 1 {A_START}-{A_END} s, task 2 block {B_START}-{B_END} s")
 diff --git a/includes/scenarios/korean/study.txt b/includes/scenarios/korean/study.txt
 new file mode 100644
-index 0000000..b0e1c3c
+index 0000000..2a84a74
 --- /dev/null
 +++ b/includes/scenarios/korean/study.txt
 @@ -0,0 +1,219 @@
@@ -944,7 +987,7 @@ index 0000000..b0e1c3c
 +0:01:41;guide;highlightbox;0,0,1,1
 +0:01:41;guide;filename;korean/A4_both.txt
 +0:01:41;guide;start
-+0:01:47;communications;radioprompt;own
++0:01:42;communications;radioprompt;own
 +0:02:21;communications;feedbacks-positive-active;False
 +0:02:21;communications;feedbacks-negative-active;False
 +
@@ -954,14 +997,14 @@ index 0000000..b0e1c3c
 +0:02:21;guide;highlightbox;0,0,1,1
 +0:02:21;guide;filename;korean/A5_main.txt
 +0:02:21;guide;start
-+0:02:29;communications;radioprompt;own
-+0:02:59;communications;radioprompt;own
-+0:03:29;communications;radioprompt;own
-+0:04:05;communications;radioprompt;own
-+0:02:47;communications;radioprompt;other
-+0:03:17;communications;radioprompt;other
-+0:03:49;communications;radioprompt;other
-+0:04:26;communications;radioprompt;other
++0:02:25;communications;radioprompt;own
++0:03:01;communications;radioprompt;own
++0:03:37;communications;radioprompt;own
++0:04:13;communications;radioprompt;own
++0:02:43;communications;radioprompt;other
++0:03:19;communications;radioprompt;other
++0:03:55;communications;radioprompt;other
++0:04:31;communications;radioprompt;other
 +
 +# Task 2: tutorial
 +0:04:51;track;pause
@@ -1062,7 +1105,7 @@ index 0000000..b0e1c3c
 +0:11:37;sysmon;automaticsolver;True
 +0:11:37;sysmon;scales-1-failure;down
 +0:07:15;communications;radioprompt;own
-+0:07:53;communications;radioprompt;own
++0:07:55;communications;radioprompt;own
 +0:08:37;communications;radioprompt;own
 +0:09:03;communications;radioprompt;own
 +0:09:43;communications;radioprompt;own
@@ -1820,7 +1863,7 @@ index d3baf8c..1294a77 100644
          shutil.copy(WEB / module, DIST / module)
      version: str = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 diff --git a/web/index.html b/web/index.html
-index ae1a68d..1ff5586 100644
+index ae1a68d..a33ce8d 100644
 --- a/web/index.html
 +++ b/web/index.html
 @@ -70,6 +70,20 @@
@@ -1858,7 +1901,7 @@ index ae1a68d..1ff5586 100644
 +                    <p id="m-done" class="hint"></p>
 +                    <p class="hint">PC 주소창에 직접 입력해도 됩니다: <strong id="m-url"></strong></p>
 +                </div>
-+                <p class="lead">다중과업 수행 연구에 참여해 주셔서 감사합니다. 약 <strong>20분</strong> 걸리며 중간에 멈출 수 없으니, 방해받지 않는 시간에 해 주세요.</p>
++                <p class="lead">다중과업 수행 연구에 참여해 주셔서 감사합니다. 약 <strong>15분</strong> 걸리며 중간에 멈출 수 없으니, 방해받지 않는 시간에 해 주세요. 테스트가 모두 종료될 때까지 <strong>Esc는 절대 누르지 마세요.</strong></p>
 +                <ul class="study-list">
 +                    <li><strong>PC</strong>(노트북 포함), <strong>마우스</strong>, 키보드, <strong>스피커나 이어폰</strong>이 필요합니다.</li>
 +                    <li><strong>Chrome</strong> 또는 <strong>Edge</strong> 브라우저를 써 주세요.</li>
@@ -1903,17 +1946,18 @@ index ae1a68d..1ff5586 100644
          </div>
 diff --git a/web/korean_tts.js b/web/korean_tts.js
 new file mode 100644
-index 0000000..e21cdab
+index 0000000..4d5d542
 --- /dev/null
 +++ b/web/korean_tts.js
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,68 @@
 +// Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
 +// Institut National Universitaire Champollion (Albi, France).
 +// License : CeCILL, version 2.1 (see the LICENSE file)
 +//
 +// Korean adaptation (2026): Korean voice of the communications task, read by the browser speech synthesis.
 +// Used by core/korean_tts.py (TTSPlayer) through window.KoreanTTS. Python polls isDone(id): the response time of a
-+// prompt starts when its message has been spoken, as with the recorded voices.
++// prompt starts when its message has been spoken, as with the recorded voices. The parts of a text separated by "|"
++// are separate utterances (some voices stop a single utterance longer than about 15 s without its "end" event).
 +
 +const supported = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
 +let voice = null;
@@ -1948,15 +1992,20 @@ index 0000000..e21cdab
 +            done.add(id);
 +            return id;
 +        }
-+        const utterance = new SpeechSynthesisUtterance(text);
-+        utterance.lang = "ko-KR";
-+        if (voice || pickVoice()) {
-+            utterance.voice = voice;
-+        }
-+        utterance.rate = rate;
-+        utterance.onend = utterance.onerror = () => done.add(id);
++        const parts = text.split("|").map((part) => part.trim()).filter(Boolean);
 +        speechSynthesis.cancel();
-+        speechSynthesis.speak(utterance);
++        parts.forEach((part, i) => {
++            const utterance = new SpeechSynthesisUtterance(part);
++            utterance.lang = "ko-KR";
++            if (voice || pickVoice()) {
++                utterance.voice = voice;
++            }
++            utterance.rate = rate;
++            if (i === parts.length - 1) { // The message is over when its last part is
++                utterance.onend = utterance.onerror = () => done.add(id);
++            }
++            speechSynthesis.speak(utterance);
++        });
 +        // Safety: some voices never fire "end" (the prompt would never be over)
 +        setTimeout(() => done.add(id), 4000 + text.length * 250);
 +        return id;
@@ -1971,10 +2020,10 @@ index 0000000..e21cdab
 +window.KoreanTTS = KoreanTTS;
 diff --git a/web/mouse_tracking.js b/web/mouse_tracking.js
 new file mode 100644
-index 0000000..27fa5ec
+index 0000000..9261231
 --- /dev/null
 +++ b/web/mouse_tracking.js
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,148 @@
 +// Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
 +// Institut National Universitaire Champollion (Albi, France).
 +// License : CeCILL, version 2.1 (see the LICENSE file)
@@ -1983,10 +2032,12 @@ index 0000000..27fa5ec
 +// cursor of the tracking task is the participant's cursor: plugins/track.py (parameter mousemove) takes the mouse
 +// movements accumulated here at each step. The pointer is locked by the start button (lockNow) for the whole
 +// session. Browsers may refuse or drop that first lock (entering full screen uses up the click), so any later key
-+// (except Esc) or click locks it again. If the lock is lost while the tracking task runs (Esc), a message also asks
-+// for a click; the losses are counted (logged by the plugin).
++// (except Esc) or click locks it again. If the lock is lost while the tracking task runs (Esc, focus change), the
++// tasks are paused (suspended, read by core/study_gate.py), the mouse pointer is shown and a message asks for a
++// click; the losses are counted (logged by the plugin).
 +
-+const state = { dx: 0, dy: 0, wanted: false, locked: false, lostUnread: false, session: false };
++const state = { dx: 0, dy: 0, wanted: false, locked: false, lostUnread: false, session: false, suspended: false,
++    pending: false };
 +let overlay = null;
 +
 +function canvas() {
@@ -1996,23 +2047,37 @@ index 0000000..27fa5ec
 +function makeOverlay() {
 +    overlay = document.createElement("div");
 +    overlay.id = "pointer-lock-overlay";
-+    overlay.textContent = "마우스가 고정되지 않았습니다. 여기를 클릭하면 고정되고 추적이 이어집니다";
++    overlay.textContent = "마우스 고정이 풀려 과제가 잠시 멈췄습니다. 여기를 클릭하면 이어집니다.\n"
++        + "Esc를 누르라는 알림이 떠도 Esc는 누르지 마세요.";
 +    Object.assign(overlay.style, {
 +        position: "fixed", left: "50%", top: "28%", transform: "translate(-50%, -50%)", zIndex: "1000",
 +        padding: "18px 28px", borderRadius: "10px", background: "rgba(230, 120, 0, 0.95)", color: "#fff",
 +        font: "600 20px 'Noto Sans KR', sans-serif", cursor: "pointer", display: "none", textAlign: "center",
++        whiteSpace: "pre-line", wordBreak: "keep-all", width: "max-content", maxWidth: "90vw",
 +    });
 +    // Keep the keyboard focus on the task canvas (the keys of the tasks go there)
 +    overlay.addEventListener("mousedown", (event) => event.preventDefault());
 +    overlay.addEventListener("click", lock);
 +    document.body.append(overlay);
++    // pyglet hides the mouse pointer over the tasks (inline cursor: none): show it while the tasks are paused
++    const style = document.createElement("style");
++    style.textContent = "body.pointer-paused #pygletCanvas { cursor: default !important; }";
++    document.head.append(style);
 +}
 +
 +function refresh() {
 +    if (!overlay) {
 +        makeOverlay();
 +    }
-+    overlay.style.display = state.wanted && !state.locked ? "block" : "none";
++    // Paused when the tracking task needs the pointer and it is not locked. The pause outlasts the tracking task
++    // (paused by the scheduler in turn): it ends only when the pointer is locked again.
++    if (state.locked) {
++        state.suspended = false;
++    } else if (state.wanted && state.session && !state.pending) { // Not while a lock request is on its way
++        state.suspended = true;
++    }
++    overlay.style.display = state.suspended ? "block" : "none";
++    document.body.classList.toggle("pointer-paused", state.suspended);
 +}
 +
 +function lock() {
@@ -2021,8 +2086,14 @@ index 0000000..27fa5ec
 +    // The page itself (not the canvas): it can be locked by the start button, before the canvas is shown
 +    if (!document.pointerLockElement) {
 +        const request = document.documentElement.requestPointerLock();
++        state.pending = true;
++        const settled = () => {
++            state.pending = false;
++            refresh();
++        };
 +        // Chrome refuses a new lock right after an Esc: the message stays and the next click retries
-+        request?.catch?.(() => {});
++        request?.then?.(settled, settled);
++        setTimeout(settled, 1500); // Also for the browsers whose requestPointerLock returns nothing
 +    }
 +}
 +
@@ -2088,9 +2159,12 @@ index 0000000..27fa5ec
 +            refresh();
 +        }
 +    },
++    // True while the tasks must stay paused (core/study_gate.py)
++    isSuspended: () => state.suspended,
 +    release() {
 +        state.wanted = false;
 +        state.session = false;
++        state.suspended = false;
 +        if (document.pointerLockElement) {
 +            document.exitPointerLock();
 +        }
@@ -2099,7 +2173,7 @@ index 0000000..27fa5ec
 +};
 +window.MouseTracking = MouseTracking;
 diff --git a/web/openmatb.js b/web/openmatb.js
-index e26ec0b..0aed568 100644
+index e26ec0b..a8f923f 100644
 --- a/web/openmatb.js
 +++ b/web/openmatb.js
 @@ -15,6 +15,8 @@ import { connectScorm } from "./scorm.js";
@@ -2158,7 +2232,7 @@ index e26ec0b..0aed568 100644
 +const QUERY = new URLSearchParams(location.search);
 +const STUDY = !DEMO && QUERY.get("admin") !== "1" && !QUERY.get("cmi5") && !QUERY.get("endpoint");
 +const STUDY_SCENARIO = "korean/study.txt";
-+const SAMPLE_PROMPT = "에이, 비, 씨, 하나, 둘, 삼, 에이, 비, 씨, 하나, 둘, 삼, 무전기, 컴, 원, 주파수, 하나, 둘, 여섯, 쩜, 오.";
++const SAMPLE_PROMPT = "에이, 비, 씨, 하나, 둘, 삼, 에이, 비, 씨, 하나, 둘, 삼. | 무전기, 컴, 원, 주파수, 하나, 둘, 여섯, 쩜, 오.";
 +let soundChecked = false;
 +
 +// Questions answered before the test (they go into the result code): propensity to trust automation, 6 items

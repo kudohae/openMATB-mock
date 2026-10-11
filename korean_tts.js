@@ -4,7 +4,8 @@
 //
 // Korean adaptation (2026): Korean voice of the communications task, read by the browser speech synthesis.
 // Used by core/korean_tts.py (TTSPlayer) through window.KoreanTTS. Python polls isDone(id): the response time of a
-// prompt starts when its message has been spoken, as with the recorded voices.
+// prompt starts when its message has been spoken, as with the recorded voices. The parts of a text separated by "|"
+// are separate utterances (some voices stop a single utterance longer than about 15 s without its "end" event).
 
 const supported = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
 let voice = null;
@@ -39,15 +40,20 @@ export const KoreanTTS = {
             done.add(id);
             return id;
         }
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = "ko-KR";
-        if (voice || pickVoice()) {
-            utterance.voice = voice;
-        }
-        utterance.rate = rate;
-        utterance.onend = utterance.onerror = () => done.add(id);
+        const parts = text.split("|").map((part) => part.trim()).filter(Boolean);
         speechSynthesis.cancel();
-        speechSynthesis.speak(utterance);
+        parts.forEach((part, i) => {
+            const utterance = new SpeechSynthesisUtterance(part);
+            utterance.lang = "ko-KR";
+            if (voice || pickVoice()) {
+                utterance.voice = voice;
+            }
+            utterance.rate = rate;
+            if (i === parts.length - 1) { // The message is over when its last part is
+                utterance.onend = utterance.onerror = () => done.add(id);
+            }
+            speechSynthesis.speak(utterance);
+        });
         // Safety: some voices never fire "end" (the prompt would never be over)
         setTimeout(() => done.add(id), 4000 + text.length * 250);
         return id;
