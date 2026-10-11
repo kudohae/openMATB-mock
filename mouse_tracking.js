@@ -91,13 +91,47 @@ document.addEventListener(
 );
 document.addEventListener(
     "mousedown",
-    () => {
-        if (state.session && !document.pointerLockElement) {
+    (event) => {
+        if (!state.session) {
+            return;
+        }
+        if (event.target !== canvas()) {
+            event.preventDefault(); // Keep the keyboard focus on the tasks (see below)
+        }
+        if (!document.pointerLockElement) {
             lock();
         }
     },
     true,
 );
+
+// The keys reach the tasks only while their canvas has the focus (pyglet listens on it). A click outside the canvas
+// (e.g. in the side margins after leaving full screen) used to take the focus away for good: Space on the slides and
+// the task keys did nothing, and the session looked stuck. During the session the canvas keeps the focus, and a key
+// that reaches the page anyway is passed on to the canvas.
+document.addEventListener("focusout", (event) => {
+    if (state.session && event.target === canvas()) {
+        setTimeout(() => {
+            if (state.session && document.hasFocus() && document.activeElement !== canvas()) {
+                canvas()?.focus();
+            }
+        }, 0);
+    }
+});
+window.addEventListener("focus", () => {
+    if (state.session) {
+        canvas()?.focus();
+    }
+});
+for (const type of ["keydown", "keyup"]) {
+    document.addEventListener(type, (event) => {
+        const target = canvas();
+        if (state.session && target && !target.hidden && event.target !== target) {
+            target.focus();
+            target.dispatchEvent(new KeyboardEvent(type, event));
+        }
+    });
+}
 document.addEventListener("fullscreenchange", () => {
     if (state.session && !document.pointerLockElement) {
         lock();
