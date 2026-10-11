@@ -384,7 +384,7 @@ index 836be25..b41aa8c 100644
      from pyglet.gl import Config
      from pyglet.media import Player as AudioPlayer
 diff --git a/core/scheduler.py b/core/scheduler.py
-index 4fcf6cf..8285553 100644
+index 4fcf6cf..a741ed6 100644
 --- a/core/scheduler.py
 +++ b/core/scheduler.py
 @@ -15,6 +15,7 @@ from core.clock import Clock
@@ -395,7 +395,26 @@ index 4fcf6cf..8285553 100644
  from core.joystick import joystick
  from core.logger import get_logger
  from core.platform import IS_WEB, browser_environment, notify_page
-@@ -132,9 +133,13 @@ class Scheduler:
+@@ -100,9 +101,17 @@ class Scheduler:
+         self._dialog_paused: bool = False
+         # Store the plugins paused by the modal dialog (those which were running when it opened)
+         self._dialog_paused_plugins: list[Any] = list()
++        self._pointer_paused: bool = False
+ 
+     def update(self, dt: float) -> None:
+-        if Window.MainWindow.modal_dialog is not None:
++        # Korean adaptation: the tasks also pause while the mouse pointer is not locked during tracking
++        pointer_paused: bool = study_gate.pointer_paused()
++        if pointer_paused != self._pointer_paused:
++            self._pointer_paused = pointer_paused
++            get_logger().log_manual_entry(
++                "Pointer lock lost: tasks paused" if pointer_paused else "Pointer locked: tasks resumed"
++            )
++        if Window.MainWindow.modal_dialog is not None or pointer_paused:
+             if not self._dialog_paused:
+                 # Pause only the running plugins, so that plugins already paused
+                 # (e.g. by a blocking plugin) are not resumed when the dialog closes
+@@ -132,9 +141,13 @@ class Scheduler:
          self.check_if_must_exit()
  
      def update_timers(self, dt: float) -> None:
@@ -410,7 +429,7 @@ index 4fcf6cf..8285553 100644
              get_logger().set_scenario_time(self.scenario_time)
          timing.set_tick(self.scenario_time, running=not self.is_scenario_time_paused())
  
-@@ -202,7 +207,10 @@ class Scheduler:
+@@ -202,7 +215,10 @@ class Scheduler:
                  if not self.is_scenario_time_paused():
                      self.pause_scenario()
                      self.paused_plugins = self.get_active_non_blocking_plugins()
@@ -424,10 +443,10 @@ index 4fcf6cf..8285553 100644
          elif active_blocking_plugin is None:
 diff --git a/core/study_gate.py b/core/study_gate.py
 new file mode 100644
-index 0000000..c81e7c4
+index 0000000..f62d15b
 --- /dev/null
 +++ b/core/study_gate.py
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,39 @@
 +# Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
 +# Institut National Universitaire Champollion (Albi, France).
 +# License : CeCILL, version 2.1 (see the LICENSE file)
@@ -439,15 +458,34 @@ index 0000000..c81e7c4
 +comm_hits: number of correct communications responses (HIT) by the participant so far.
 +skip_to: scenario time (s) the scheduler jumps to at its next update (the events in between are executed at once).
 +time_factor: speed of the scenario time (10 with ?fast=1 in the web page address, to check the study end quickly).
++pointer_paused(): the mouse pointer lock was lost while the tracking task needs it (web/mouse_tracking.js): the
++scheduler pauses the tasks, as with a dialog, until the pointer is locked again.
 +"""
 +
 +from __future__ import annotations
 +
 +import os
++import sys
++from typing import Any
 +
 +comm_hits: int = 0
 +skip_to: float | None = None
 +time_factor: float = float(os.environ.get("OPENMATB_TIME_FACTOR", "1"))
++
++_mouse_tracking: Any = None
++
++
++def pointer_paused() -> bool:
++    global _mouse_tracking
++    if sys.platform != "emscripten":
++        return False
++    if _mouse_tracking is None:
++        import js  # type: ignore[import-not-found]
++
++        _mouse_tracking = getattr(js.window, "MouseTracking", None)
++        if _mouse_tracking is None:
++            return False
++    return bool(_mouse_tracking.isSuspended())
 diff --git a/core/widgets/radio.py b/core/widgets/radio.py
 index b2f7f4a..fe185ae 100644
 --- a/core/widgets/radio.py
@@ -496,10 +534,10 @@ index b2f7f4a..fe185ae 100644
          return (*shape.color[:3], shape.opacity)
 diff --git a/includes/instructions/korean/01_welcome.txt b/includes/instructions/korean/01_welcome.txt
 new file mode 100644
-index 0000000..ae3a2cc
+index 0000000..7cf67d3
 --- /dev/null
 +++ b/includes/instructions/korean/01_welcome.txt
-@@ -0,0 +1,7 @@
+@@ -0,0 +1,9 @@
 +<h1>연구에 참여해 주셔서 감사합니다</h1>
 +
 +<p>이 과제는 프랑스 연구진이 공개한 다중과업 연구 도구 <strong>OpenMATB</strong>를 한국어로 옮긴 것입니다. 조종 경험이나 사전 지식은 필요 없습니다.</p>
@@ -507,6 +545,8 @@ index 0000000..ae3a2cc
 +<p>과제는 두 부분이며, 설명과 연습을 포함해 모두 <strong>약 15분</strong>입니다.<br>· <strong>과제 1</strong> : 추적과 교신<br>· <strong>과제 2</strong> : 과제 1 + 시스템 감시와 연료 관리</p>
 +
 +<p>왼손은 키보드, 오른손은 마우스에 두세요. 다른 창으로 가면 과제가 멈추니 끝날 때까지 이 화면에 머물러 주세요. 소리를 켜 두세요.</p>
++
++<p>테스트를 진행하는 동안 Esc를 누르라는 알림이 뜨면 무시하세요. <strong>Esc를 누르지 마세요.</strong></p>
 diff --git a/includes/instructions/korean/99_end.txt b/includes/instructions/korean/99_end.txt
 new file mode 100644
 index 0000000..a801751
@@ -1971,10 +2011,10 @@ index 0000000..e21cdab
 +window.KoreanTTS = KoreanTTS;
 diff --git a/web/mouse_tracking.js b/web/mouse_tracking.js
 new file mode 100644
-index 0000000..27fa5ec
+index 0000000..9261231
 --- /dev/null
 +++ b/web/mouse_tracking.js
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,148 @@
 +// Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
 +// Institut National Universitaire Champollion (Albi, France).
 +// License : CeCILL, version 2.1 (see the LICENSE file)
@@ -1983,10 +2023,12 @@ index 0000000..27fa5ec
 +// cursor of the tracking task is the participant's cursor: plugins/track.py (parameter mousemove) takes the mouse
 +// movements accumulated here at each step. The pointer is locked by the start button (lockNow) for the whole
 +// session. Browsers may refuse or drop that first lock (entering full screen uses up the click), so any later key
-+// (except Esc) or click locks it again. If the lock is lost while the tracking task runs (Esc), a message also asks
-+// for a click; the losses are counted (logged by the plugin).
++// (except Esc) or click locks it again. If the lock is lost while the tracking task runs (Esc, focus change), the
++// tasks are paused (suspended, read by core/study_gate.py), the mouse pointer is shown and a message asks for a
++// click; the losses are counted (logged by the plugin).
 +
-+const state = { dx: 0, dy: 0, wanted: false, locked: false, lostUnread: false, session: false };
++const state = { dx: 0, dy: 0, wanted: false, locked: false, lostUnread: false, session: false, suspended: false,
++    pending: false };
 +let overlay = null;
 +
 +function canvas() {
@@ -1996,23 +2038,37 @@ index 0000000..27fa5ec
 +function makeOverlay() {
 +    overlay = document.createElement("div");
 +    overlay.id = "pointer-lock-overlay";
-+    overlay.textContent = "마우스가 고정되지 않았습니다. 여기를 클릭하면 고정되고 추적이 이어집니다";
++    overlay.textContent = "마우스 고정이 풀려 과제가 잠시 멈췄습니다. 여기를 클릭하면 이어집니다.\n"
++        + "Esc를 누르라는 알림이 떠도 Esc는 누르지 마세요.";
 +    Object.assign(overlay.style, {
 +        position: "fixed", left: "50%", top: "28%", transform: "translate(-50%, -50%)", zIndex: "1000",
 +        padding: "18px 28px", borderRadius: "10px", background: "rgba(230, 120, 0, 0.95)", color: "#fff",
 +        font: "600 20px 'Noto Sans KR', sans-serif", cursor: "pointer", display: "none", textAlign: "center",
++        whiteSpace: "pre-line", wordBreak: "keep-all", width: "max-content", maxWidth: "90vw",
 +    });
 +    // Keep the keyboard focus on the task canvas (the keys of the tasks go there)
 +    overlay.addEventListener("mousedown", (event) => event.preventDefault());
 +    overlay.addEventListener("click", lock);
 +    document.body.append(overlay);
++    // pyglet hides the mouse pointer over the tasks (inline cursor: none): show it while the tasks are paused
++    const style = document.createElement("style");
++    style.textContent = "body.pointer-paused #pygletCanvas { cursor: default !important; }";
++    document.head.append(style);
 +}
 +
 +function refresh() {
 +    if (!overlay) {
 +        makeOverlay();
 +    }
-+    overlay.style.display = state.wanted && !state.locked ? "block" : "none";
++    // Paused when the tracking task needs the pointer and it is not locked. The pause outlasts the tracking task
++    // (paused by the scheduler in turn): it ends only when the pointer is locked again.
++    if (state.locked) {
++        state.suspended = false;
++    } else if (state.wanted && state.session && !state.pending) { // Not while a lock request is on its way
++        state.suspended = true;
++    }
++    overlay.style.display = state.suspended ? "block" : "none";
++    document.body.classList.toggle("pointer-paused", state.suspended);
 +}
 +
 +function lock() {
@@ -2021,8 +2077,14 @@ index 0000000..27fa5ec
 +    // The page itself (not the canvas): it can be locked by the start button, before the canvas is shown
 +    if (!document.pointerLockElement) {
 +        const request = document.documentElement.requestPointerLock();
++        state.pending = true;
++        const settled = () => {
++            state.pending = false;
++            refresh();
++        };
 +        // Chrome refuses a new lock right after an Esc: the message stays and the next click retries
-+        request?.catch?.(() => {});
++        request?.then?.(settled, settled);
++        setTimeout(settled, 1500); // Also for the browsers whose requestPointerLock returns nothing
 +    }
 +}
 +
@@ -2088,9 +2150,12 @@ index 0000000..27fa5ec
 +            refresh();
 +        }
 +    },
++    // True while the tasks must stay paused (core/study_gate.py)
++    isSuspended: () => state.suspended,
 +    release() {
 +        state.wanted = false;
 +        state.session = false;
++        state.suspended = false;
 +        if (document.pointerLockElement) {
 +            document.exitPointerLock();
 +        }

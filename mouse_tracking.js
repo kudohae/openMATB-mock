@@ -6,10 +6,12 @@
 // cursor of the tracking task is the participant's cursor: plugins/track.py (parameter mousemove) takes the mouse
 // movements accumulated here at each step. The pointer is locked by the start button (lockNow) for the whole
 // session. Browsers may refuse or drop that first lock (entering full screen uses up the click), so any later key
-// (except Esc) or click locks it again. If the lock is lost while the tracking task runs (Esc), a message also asks
-// for a click; the losses are counted (logged by the plugin).
+// (except Esc) or click locks it again. If the lock is lost while the tracking task runs (Esc, focus change), the
+// tasks are paused (suspended, read by core/study_gate.py), the mouse pointer is shown and a message asks for a
+// click; the losses are counted (logged by the plugin).
 
-const state = { dx: 0, dy: 0, wanted: false, locked: false, lostUnread: false, session: false };
+const state = { dx: 0, dy: 0, wanted: false, locked: false, lostUnread: false, session: false, suspended: false,
+    pending: false };
 let overlay = null;
 
 function canvas() {
@@ -19,23 +21,37 @@ function canvas() {
 function makeOverlay() {
     overlay = document.createElement("div");
     overlay.id = "pointer-lock-overlay";
-    overlay.textContent = "마우스가 고정되지 않았습니다. 여기를 클릭하면 고정되고 추적이 이어집니다";
+    overlay.textContent = "마우스 고정이 풀려 과제가 잠시 멈췄습니다. 여기를 클릭하면 이어집니다.\n"
+        + "Esc를 누르라는 알림이 떠도 Esc는 누르지 마세요.";
     Object.assign(overlay.style, {
         position: "fixed", left: "50%", top: "28%", transform: "translate(-50%, -50%)", zIndex: "1000",
         padding: "18px 28px", borderRadius: "10px", background: "rgba(230, 120, 0, 0.95)", color: "#fff",
         font: "600 20px 'Noto Sans KR', sans-serif", cursor: "pointer", display: "none", textAlign: "center",
+        whiteSpace: "pre-line", wordBreak: "keep-all", width: "max-content", maxWidth: "90vw",
     });
     // Keep the keyboard focus on the task canvas (the keys of the tasks go there)
     overlay.addEventListener("mousedown", (event) => event.preventDefault());
     overlay.addEventListener("click", lock);
     document.body.append(overlay);
+    // pyglet hides the mouse pointer over the tasks (inline cursor: none): show it while the tasks are paused
+    const style = document.createElement("style");
+    style.textContent = "body.pointer-paused #pygletCanvas { cursor: default !important; }";
+    document.head.append(style);
 }
 
 function refresh() {
     if (!overlay) {
         makeOverlay();
     }
-    overlay.style.display = state.wanted && !state.locked ? "block" : "none";
+    // Paused when the tracking task needs the pointer and it is not locked. The pause outlasts the tracking task
+    // (paused by the scheduler in turn): it ends only when the pointer is locked again.
+    if (state.locked) {
+        state.suspended = false;
+    } else if (state.wanted && state.session && !state.pending) { // Not while a lock request is on its way
+        state.suspended = true;
+    }
+    overlay.style.display = state.suspended ? "block" : "none";
+    document.body.classList.toggle("pointer-paused", state.suspended);
 }
 
 function lock() {
@@ -44,8 +60,14 @@ function lock() {
     // The page itself (not the canvas): it can be locked by the start button, before the canvas is shown
     if (!document.pointerLockElement) {
         const request = document.documentElement.requestPointerLock();
+        state.pending = true;
+        const settled = () => {
+            state.pending = false;
+            refresh();
+        };
         // Chrome refuses a new lock right after an Esc: the message stays and the next click retries
-        request?.catch?.(() => {});
+        request?.then?.(settled, settled);
+        setTimeout(settled, 1500); // Also for the browsers whose requestPointerLock returns nothing
     }
 }
 
@@ -111,9 +133,12 @@ export const MouseTracking = {
             refresh();
         }
     },
+    // True while the tasks must stay paused (core/study_gate.py)
+    isSuspended: () => state.suspended,
     release() {
         state.wanted = false;
         state.session = false;
+        state.suspended = false;
         if (document.pointerLockElement) {
             document.exitPointerLock();
         }
