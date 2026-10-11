@@ -454,10 +454,10 @@ index 4fcf6cf..a741ed6 100644
          elif active_blocking_plugin is None:
 diff --git a/core/study_gate.py b/core/study_gate.py
 new file mode 100644
-index 0000000..f62d15b
+index 0000000..fe84505
 --- /dev/null
 +++ b/core/study_gate.py
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,42 @@
 +# Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
 +# Institut National Universitaire Champollion (Albi, France).
 +# License : CeCILL, version 2.1 (see the LICENSE file)
@@ -469,6 +469,8 @@ index 0000000..f62d15b
 +comm_hits: number of correct communications responses (HIT) by the participant so far.
 +skip_to: scenario time (s) the scheduler jumps to at its next update (the events in between are executed at once).
 +time_factor: speed of the scenario time (10 with ?fast=1 in the web page address, to check the study end quickly).
++study: the participant page runs the study (web/openmatb.js). Its only pause is the one of web/mouse_tracking.js
++(orange message, a click resumes): Esc, P and a hidden page open no dialog of their own.
 +pointer_paused(): the mouse pointer lock was lost while the tracking task needs it (web/mouse_tracking.js): the
 +scheduler pauses the tasks, as with a dialog, until the pointer is locked again.
 +"""
@@ -482,6 +484,7 @@ index 0000000..f62d15b
 +comm_hits: int = 0
 +skip_to: float | None = None
 +time_factor: float = float(os.environ.get("OPENMATB_TIME_FACTOR", "1"))
++study: bool = os.environ.get("OPENMATB_STUDY") == "1"
 +
 +_mouse_tracking: Any = None
 +
@@ -544,10 +547,42 @@ index b2f7f4a..fe185ae 100644
          shape = self.vertex["feedback_line_0"]
          return (*shape.color[:3], shape.opacity)
 diff --git a/core/window.py b/core/window.py
-index 91006b3..78b1a93 100644
+index 91006b3..f7ba4b0 100644
 --- a/core/window.py
 +++ b/core/window.py
-@@ -357,7 +357,8 @@ class Window(Window):
+@@ -18,7 +18,7 @@ from pyglet.text.layout import TextLayout
+ from pyglet.window import Window
+ from pyglet.window import key as winkey
+ 
+-from core import pyglet_compat, timing
++from core import pyglet_compat, study_gate, timing
+ from core.constants import COLORS as C
+ from core.constants import (
+     HEADLESS_MODE,
+@@ -153,7 +153,8 @@ class Window(Window):
+ 
+     def on_visibility_change(self, hidden: bool) -> None:
+         get_logger().log_manual_entry("hidden" if hidden else "visible", key="visibility")
+-        if hidden and not REPLAY_MODE and not self.selector_visible and self.modal_dialog is None:
++        # Korean adaptation: in the study, web/mouse_tracking.js pauses the tasks instead (a click resumes)
++        if hidden and not REPLAY_MODE and not self.selector_visible and self.modal_dialog is None and not study_gate.study:
+             self.pause_prompt()
+ 
+     def display_session_id(self) -> None:
+@@ -300,9 +301,10 @@ class Window(Window):
+             keystr: str = winkey.symbol_string(symbol)
+             self.keyboard[keystr] = True  # KeyStateHandler
+ 
+-            if keystr == "ESCAPE":
++            # Korean adaptation: in the study, no exit or pause dialog (one pause only: web/mouse_tracking.js)
++            if keystr == "ESCAPE" and not study_gate.study:
+                 self.exit_prompt()
+-            elif keystr == "P":
++            elif keystr == "P" and not study_gate.study:
+                 self.pause_prompt()
+ 
+             get_logger().record_input("keyboard", keystr, "press")
+@@ -357,7 +359,8 @@ class Window(Window):
      def exit_prompt(self) -> None:
          if HEADLESS_MODE:
              return
@@ -2048,10 +2083,10 @@ index 0000000..7daabc8
 +window.KoreanTTS = KoreanTTS;
 diff --git a/web/mouse_tracking.js b/web/mouse_tracking.js
 new file mode 100644
-index 0000000..9261231
+index 0000000..8ae9a5a
 --- /dev/null
 +++ b/web/mouse_tracking.js
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,189 @@
 +// Copyright 2023-2026, by Julien Cegarra & Benoît Valéry. All rights reserved.
 +// Institut National Universitaire Champollion (Albi, France).
 +// License : CeCILL, version 2.1 (see the LICENSE file)
@@ -2075,7 +2110,7 @@ index 0000000..9261231
 +function makeOverlay() {
 +    overlay = document.createElement("div");
 +    overlay.id = "pointer-lock-overlay";
-+    overlay.textContent = "마우스 고정이 풀려 과제가 잠시 멈췄습니다. 여기를 클릭하면 이어집니다.\n"
++    overlay.textContent = "과제가 잠시 멈췄습니다. 여기를 클릭하면 이어집니다.\n"
 +        + "Esc를 누르라는 알림이 떠도 Esc는 누르지 마세요.";
 +    Object.assign(overlay.style, {
 +        position: "fixed", left: "50%", top: "28%", transform: "translate(-50%, -50%)", zIndex: "1000",
@@ -2145,13 +2180,54 @@ index 0000000..9261231
 +);
 +document.addEventListener(
 +    "mousedown",
-+    () => {
-+        if (state.session && !document.pointerLockElement) {
++    (event) => {
++        if (!state.session) {
++            return;
++        }
++        if (event.target !== canvas()) {
++            event.preventDefault(); // Keep the keyboard focus on the tasks (see below)
++        }
++        if (!document.pointerLockElement) {
 +            lock();
 +        }
 +    },
 +    true,
 +);
++
++// The keys reach the tasks only while their canvas has the focus (pyglet listens on it). A click outside the canvas
++// (e.g. in the side margins after leaving full screen) used to take the focus away for good: Space on the slides and
++// the task keys did nothing, and the session looked stuck. During the session the canvas keeps the focus, and a key
++// that reaches the page anyway is passed on to the canvas.
++document.addEventListener("focusout", (event) => {
++    if (state.session && event.target === canvas()) {
++        setTimeout(() => {
++            if (state.session && document.hasFocus() && document.activeElement !== canvas()) {
++                canvas()?.focus();
++            }
++        }, 0);
++    }
++});
++window.addEventListener("focus", () => {
++    if (state.session) {
++        canvas()?.focus();
++    }
++});
++for (const type of ["keydown", "keyup"]) {
++    document.addEventListener(type, (event) => {
++        const target = canvas();
++        if (state.session && target && !target.hidden && event.target !== target) {
++            target.focus();
++            target.dispatchEvent(new KeyboardEvent(type, event));
++        }
++    });
++}
++// Another tab or window: the tasks pause whatever runs (the browser slows the page down), until a click
++document.addEventListener("visibilitychange", () => {
++    if (state.session && document.hidden) {
++        state.suspended = true;
++        refresh();
++    }
++});
 +document.addEventListener("fullscreenchange", () => {
 +    if (state.session && !document.pointerLockElement) {
 +        lock();
@@ -2201,7 +2277,7 @@ index 0000000..9261231
 +};
 +window.MouseTracking = MouseTracking;
 diff --git a/web/openmatb.js b/web/openmatb.js
-index e26ec0b..0aed568 100644
+index e26ec0b..5a2d283 100644
 --- a/web/openmatb.js
 +++ b/web/openmatb.js
 @@ -15,6 +15,8 @@ import { connectScorm } from "./scorm.js";
@@ -2511,10 +2587,14 @@ index e26ec0b..0aed568 100644
      history.replaceState(null, "", `?${params}`);
  
      const file = $("mode").value === "replay" ? $("session-file").files[0] : undefined;
-@@ -688,6 +936,10 @@ $("start").addEventListener("click", async () => {
+@@ -688,6 +936,14 @@ $("start").addEventListener("click", async () => {
      }
      status(null);
      try {
++        if (STUDY) {
++            // One pause only in the study (mouse_tracking.js): no exit or pause dialog (read by core/study_gate.py)
++            pyodide.runPython("import os; os.environ['OPENMATB_STUDY'] = '1'");
++        }
 +        if (STUDY && QUERY.get("fast") === "1") {
 +            // Researcher check of the whole study (end page, result code): scenario time 10 times faster
 +            pyodide.runPython("import os; os.environ['OPENMATB_TIME_FACTOR'] = '10'"); // Read by core/study_gate.py
@@ -2522,7 +2602,7 @@ index e26ec0b..0aed568 100644
          await pyodide.runPythonAsync(`import runpy; runpy.run_path("main.py", run_name="__main__")`);
          $("pygletCanvas").focus();
      } catch (error) {
-@@ -729,6 +981,7 @@ function destinationItem(text, ok) {
+@@ -729,6 +985,7 @@ function destinationItem(text, ok) {
  
  // Dispatched by core.logger.Logger.end_session(), with the path of the session file: download it and/or send it
  document.addEventListener("openmatb-end", async (event) => {
@@ -2530,7 +2610,7 @@ index e26ec0b..0aed568 100644
      if (document.fullscreenElement) {
          document.exitFullscreen();
      }
-@@ -751,6 +1004,10 @@ document.addEventListener("openmatb-end", async (event) => {
+@@ -751,6 +1008,10 @@ document.addEventListener("openmatb-end", async (event) => {
          document.querySelector('#end [data-i18n="kept_in_browser"]').hidden = true;
          return;
      }
