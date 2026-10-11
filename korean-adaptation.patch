@@ -372,10 +372,10 @@ index 1ba23c0..7534f83 100644
      task.add_done_callback(report)
  
 diff --git a/core/pyglet_compat.py b/core/pyglet_compat.py
-index 836be25..b41aa8c 100644
+index 836be25..726e049 100644
 --- a/core/pyglet_compat.py
 +++ b/core/pyglet_compat.py
-@@ -27,6 +27,31 @@ if PYGLET_3:
+@@ -27,6 +27,44 @@ if PYGLET_3:
      if not hasattr(_AbstractImage, "anchor_y"):
          _AbstractImage.anchor_x = 0
          _AbstractImage.anchor_y = 0
@@ -389,12 +389,25 @@ index 836be25..b41aa8c 100644
 +
 +        _js_key_to_pyglet = _web_window.js_key_to_pyglet
 +
++        # Also the other keys of the tasks: with the input method on, Space, Enter or an arrow can come as "Process"
++        # too (e.g. Space after a pump key typed in Hangul mode), which pyglet cannot map: the key was lost.
++        _named_codes: dict[str, int] = {
++            "Space": _key.SPACE,
++            "Enter": _key.ENTER,
++            "NumpadEnter": _key.ENTER,
++            "ArrowUp": _key.UP,
++            "ArrowDown": _key.DOWN,
++            "ArrowLeft": _key.LEFT,
++            "ArrowRight": _key.RIGHT,
++            "Escape": _key.ESCAPE,
++        }
++
 +        def _code_symbol(code: str) -> int | None:
 +            if code.startswith("Key") and len(code) == 4:
 +                return getattr(_key, code[3], None)
 +            if code.startswith("Digit") and len(code) == 6:
 +                return getattr(_key, "_" + code[5], None)
-+            return None
++            return _named_codes.get(code)
 +
 +        def _js_key_to_pyglet_by_code(event: Any) -> Any:
 +            symbol, modifiers = _js_key_to_pyglet(event)
