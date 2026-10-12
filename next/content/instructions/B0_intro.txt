@@ -1,0 +1,7 @@
+<h1>과제 2. 네 가지 일 동시에 하기</h1>
+
+<p>과제 1의 추적과 교신에 <strong>시스템 감시</strong>와 <strong>연료 관리</strong>가 더해집니다. 여러 무인기와 자동화 장비를 혼자 감독하는 상황을 단순하게 옮긴 것입니다.</p>
+
+<p>새로 나오는 두 칸은 <strong>실제 과제 화면을 보면서</strong> 설명합니다. 설명하는 곳은 <strong>주황 테두리</strong>로 표시되고, 설명을 읽은 뒤 그 칸만 잠깐 직접 해 봅니다.</p>
+
+<p>키 배치<br>· 숫자 <strong>1~6</strong> : 시스템 감시<br>· <strong>Q W E R / A S D F</strong> : 연료 펌프<br>· <strong>화살표, Enter</strong> : 교신<br>· 마우스 : 추적</p>

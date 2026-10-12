@@ -1,0 +1,62 @@
+:root {
+    --bg: #f0f0f0;
+    --panel: #ffffff;
+    --text: #323232;
+    --muted: #6b6b6b;
+    --accent: #3d8f64;
+    --border: #d6d6d6;
+    --warning-bg: #fff4e0;
+    --warning-text: #6b4200;
+    --warning-border: #f0c67a;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; }
+.screen { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.screen[hidden], [hidden] { display: none !important; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 28px 32px;
+    width: 100%; max-width: 560px; }
+h1 { margin: 0 0 4px; font-size: 1.5rem; }
+h2 { font-size: 1.05rem; margin: 20px 0 4px; }
+.subtitle { margin: 0 0 20px; color: var(--muted); }
+.lead { line-height: 1.6; }
+.hint { margin: 6px 0 0; font-size: 0.85rem; color: var(--muted); }
+.study-list { padding-left: 20px; line-height: 1.6; }
+label.inline { display: flex; gap: 8px; align-items: center; margin: 16px 0 0; }
+.pre-q { margin: 10px 0; }
+.pre-q p { margin: 0 0 4px; }
+.pre-q .scale { display: flex; gap: 6px; flex-wrap: wrap; font-size: 0.9rem; }
+.pre-q .scale label { display: flex; gap: 4px; align-items: center; }
+button { margin-top: 20px; width: 100%; padding: 12px; font: inherit; font-weight: 600; border: 0; border-radius: 4px;
+    background: var(--accent); color: #fff; cursor: pointer; }
+button:disabled { opacity: 0.5; cursor: default; }
+button.secondary { background: var(--panel); color: var(--text); border: 1px solid var(--border); font-weight: 400; }
+.study-buttons { display: flex; gap: 8px; align-items: center; }
+.study-buttons button { margin-top: 8px; width: auto; flex: 1; }
+.notice { margin: 16px 0 0; padding: 10px 12px; font-size: 0.9rem; border-radius: 4px; background: var(--warning-bg);
+    color: var(--warning-text); border: 1px solid var(--warning-border); }
+#result-code { width: 100%; font: 12px ui-monospace, monospace; word-break: break-all; }
+
+/* Task screen: the canvas fills the page, the slides and guides are DOM boxes over it */
+#task { position: fixed; inset: 0; background: rgb(240, 240, 240); }
+#canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: none; }
+body.pointer-paused #canvas { cursor: default; }
+#overlay { position: absolute; inset: 0; pointer-events: none; }
+.slide, .guide { position: absolute; display: flex; flex-direction: column; color: rgb(50, 50, 50);
+    font-family: "Noto Sans KR", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; word-break: keep-all; }
+.slide { background: rgb(240, 240, 240); font-size: 22px; }
+.guide { background: rgb(255, 255, 255); border: 3px solid rgb(230, 120, 0); border-radius: 4px; }
+.slide-title { flex: 0 0 auto; padding: 4% 6% 0; text-align: center; }
+.slide-title h1 { font-size: 1.65em; margin: 0; }
+.slide-body { flex: 1 1 auto; overflow: hidden; padding: 2% 10%; display: flex; flex-direction: column;
+    justify-content: center; line-height: 1.55; }
+.guide .slide-body { padding: 2% 7%; }
+.slide-body p { margin: 0.35em 0; }
+.slide-next { flex: 0 0 auto; padding: 0 0 4%; text-align: center; }
+#pause-notice { position: fixed; left: 50%; top: 28%; transform: translate(-50%, -50%); z-index: 10; padding: 18px 28px;
+    border-radius: 10px; background: rgba(230, 120, 0, 0.95); color: #fff; font: 600 20px system-ui, sans-serif;
+    cursor: pointer; text-align: center; white-space: pre-line; word-break: keep-all; width: max-content; max-width: 90vw; }
+#crash { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
+    background: rgba(240, 240, 240, 0.97); }
+.crash-panel { max-width: 560px; padding: 28px 32px; background: #fff; border: 1px solid var(--border);
+    border-radius: 8px; line-height: 1.6; word-break: keep-all; }
