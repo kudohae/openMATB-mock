@@ -117,7 +117,27 @@ function setupMobile() {
     };
 }
 
+// Noto Sans KR, as in v1: the Latin face limited to its range, and the subsets of Hangul used by the texts
+// (fonts/korean.json). Without them (failed download) the system Korean font is used.
+async function loadFonts() {
+    try {
+        const korean = await (await fetch("fonts/korean.json")).json();
+        const faces = [400, 700].map((weight) => new FontFace("Noto Sans KR", `url(fonts/noto-sans-${weight}.woff2)`,
+            { weight: String(weight), unicodeRange: korean.latin }));
+        for (const face of korean.faces) {
+            faces.push(new FontFace("Noto Sans KR", `url(fonts/${face.file})`,
+                { weight: String(face.weight), unicodeRange: face.range }));
+        }
+        for (const face of await Promise.all(faces.map((f) => f.load()))) {
+            document.fonts.add(face);
+        }
+    } catch (error) {
+        console.warn("No Korean fonts:", error);
+    }
+}
+
 async function loadContent() {
+    const fonts = loadFonts();
     const scenarioText = await (await fetch("content/study.txt")).text();
     const scenario = parseScenario(scenarioText);
     const names = [...new Set(scenario.events.filter((e) => e.command[0] === "filename").map((e) => e.command[1]))];
@@ -129,6 +149,7 @@ async function loadContent() {
         }
         files[name] = await response.text();
     }));
+    await fonts;
     return { scenario, files };
 }
 
@@ -284,7 +305,7 @@ function startSession() {
     if (BOT) {
         window.__engineTime = () => engine.scenarioTime; // For the automated checks
     }
-    engine.isSuspended = () => mouse.suspended;
+    engine.isSuspended = () => mouse.suspended || Boolean(abortReason); // Also behind the error notice
     engine.onEnd = finishSession;
     log.manual(0, "voice", TTS.voiceName());
     log.manual(0, "window", `${innerWidth}x${innerHeight} dpr ${devicePixelRatio}`);
@@ -387,8 +408,20 @@ $("crash-end").addEventListener("click", () => {
         }
     }
 });
-window.addEventListener("error", (e) => engine && crash("멈춤", e.error || e.message));
-window.addEventListener("unhandledrejection", (e) => engine && !ended && crash("멈춤", e.reason));
+// Not the errors of other scripts in the page (browser extensions, cross-origin scripts) or the harmless ResizeObserver
+// notice: the session goes on
+const foreign = (message, file, stack) => /^Script error\.?$|ResizeObserver loop/.test(message || "")
+    || Boolean(file && !file.startsWith(location.origin)) || /-extension:\/\//.test(stack || "");
+window.addEventListener("error", (e) => {
+    if (engine && !foreign(e.message, e.filename, e.error?.stack)) {
+        crash("멈춤", e.error || e.message);
+    }
+});
+window.addEventListener("unhandledrejection", (e) => {
+    if (engine && !ended && !foreign(String(e.reason?.message || e.reason), "", e.reason?.stack)) {
+        crash("멈춤", e.reason);
+    }
+});
 
 // ---- End of the session ----
 async function finishSession(reason) {
