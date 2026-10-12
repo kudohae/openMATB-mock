@@ -7,6 +7,10 @@ const choice = (list) => list[Math.floor(Math.random() * list.length)];
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const round1 = (v) => Math.round(v * 10) / 10;
 
+// Milliseconds from start to t, rounded to the microsecond: the scenario time adds steps (0.2 s, 0.08 s) that are not
+// exact in binary, so that 20 steps of 0.2 s make 3999.9999 ms and a 4000 ms delay would wait one more step
+const msSince = (t, start) => Math.round((t - start) * 1e6) / 1e3;
+
 // ---------------------------------------------------------------- Tracking (plugins/track.py, widgets/reticle.py)
 export class Track extends Plugin {
     constructor(engine, mouse) {
@@ -195,7 +199,7 @@ export class Sysmon extends Plugin {
         // Automatic solver (agents/default_agent.py): solves a failure automaticsolverdelay ms after its start
         if (this.params.automaticsolver) {
             for (const g of this.gauges().filter((x) => x._onfailure)) {
-                if (g._response_start !== null && (this.t - g._response_start) * 1000 >= this.params.automaticsolverdelay) {
+                if (g._response_start !== null && msSince(this.t, g._response_start) >= this.params.automaticsolverdelay) {
                     this.onKey(g.key, "press", { t: this.t, emulate: true });
                 }
             }
@@ -426,7 +430,7 @@ export class Communications extends Plugin {
         return this.radios.filter((r) => r.targetfreq !== null && !r.is_prompting);
     }
     elapsedMs(start) {
-        return start === null ? 0 : (this.t - start) * 1000;
+        return start === null ? 0 : msSince(this.t, start);
     }
     step() {
         const prompt = String(this.params.radioprompt).toLowerCase();

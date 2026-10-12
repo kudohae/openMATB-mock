@@ -15,6 +15,8 @@ const SAMPLE_PROMPT = "에이, 비, 씨, 하나, 둘, 삼, 에이, 비, 씨, 하
 const QUERY = new URLSearchParams(location.search);
 const FAST = QUERY.get("fast") === "1";
 const BOT = QUERY.get("bot") === "1";
+const PROBE = QUERY.get("probe") === "1"; // Engine state readable by the checks driven from outside (tests)
+const TEST = BOT || PROBE; // Nothing sent: no visit log, no raw data
 const $ = (id) => document.getElementById(id);
 const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
     || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent)); // iPadOS reports a Mac
@@ -34,7 +36,7 @@ function logVisit(stage) {
         "entry.1949545432": FAST ? `${stage} (fast)` : stage,
         "entry.1369225893": `${IS_MOBILE ? "mobile" : "pc"} ${browserName().split(" ")[0]} ${ENGINE}`,
     });
-    if (BOT) {
+    if (TEST) {
         return;
     }
     fetch(VISIT_LOG, { method: "POST", mode: "no-cors", body, keepalive: true }).catch(() => {});
@@ -302,8 +304,11 @@ function startSession() {
     [new Instructions(engine, content.files), new Guide(engine, content.files), new Track(engine, mouse), new Sysmon(engine),
         comm, new Resman(engine), new Gate(engine, comm)].forEach((p) => engine.add(p));
     engine.load(content.scenario);
-    if (BOT) {
+    if (TEST) {
         window.__engineTime = () => engine.scenarioTime; // For the automated checks
+    }
+    if (PROBE) {
+        window.__probe = { engine, log, phases: content.scenario.phases };
     }
     engine.isSuspended = () => mouse.suspended || Boolean(abortReason); // Also behind the error notice
     engine.onEnd = finishSession;
@@ -481,7 +486,7 @@ async function finishSession(reason) {
 
 // Raw data of the session to DataPipe (https://pipe.jspsych.org), JSON text
 async function upload(result) {
-    if (!DATAPIPE_EXPERIMENT || BOT) {
+    if (!DATAPIPE_EXPERIMENT || TEST) {
         window.studyRaw = log.compact({ file: sessionFile, result });
         return;
     }
