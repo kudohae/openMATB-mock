@@ -1,112 +1,34 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>OpenMATB</title>
+    <title>다중과업 수행 연구</title>
     <link rel="icon" href="favicon.png">
-    <meta name="pyodide-module" content="pyodide/pyodide-module.js">
-    <style>
-        :root {
-            --bg: #f0f0f0;
-            --panel: #ffffff;
-            --text: #323232;
-            --muted: #6b6b6b;
-            --accent: #3d8f64;
-            --accent-text: #ffffff;
-            --border: #d6d6d6;
-            --warning-bg: #fff4e0;
-            --warning-text: #6b4200;
-            --warning-border: #f0c67a;
-            --info-bg: #e8f1fb;
-            --info-text: #1d4e7a;
-            --info-border: #a9c8ea;
-        }
-        * { box-sizing: border-box; }
-        html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
-            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-        /* pyglet sets the canvas size; core/window.py scales it to the page when resized: keep it centered
-           horizontally and at the top (a page taller than the display, e.g. after leaving fullscreen, leaves the
-           empty space under the tasks, not above their title bar) */
-        #pygletCanvas { position: fixed; inset: 0; margin: 0 auto; width: 100vw; height: 100vh; display: block; }
-        #pygletCanvas[hidden] { display: none; }
-        .screen { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 16px; }
-        .screen[hidden] { display: none; }
-        .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
-            padding: 28px 32px; width: 100%; max-width: 440px; }
-        h1 { margin: 0 0 4px; font-size: 1.6rem; }
-        h1 .version { font-size: 0.55em; font-weight: 600; color: var(--muted); }
-        .subtitle { margin: 0 0 24px; color: var(--muted); }
-        label { display: block; margin: 16px 0 6px; font-weight: 600; }
-        label.inline { display: flex; gap: 8px; align-items: center; font-weight: 400; }
-        select, input[type=file] { width: 100%; padding: 8px; font: inherit; border: 1px solid var(--border);
-            border-radius: 4px; background: var(--panel); color: var(--text); }
-        .hint { margin: 6px 0 0; font-size: 0.85rem; color: var(--muted); }
-        #wasm-mime { cursor: help; }
-        .notice { display: flex; gap: 8px; align-items: flex-start; margin: 16px 0 0; padding: 10px 12px;
-            font-size: 0.85rem; border-radius: 4px; border: 1px solid; }
-        .notice::before { font-size: 1.1rem; line-height: 1.1; flex: none; }
-        .notice[hidden] { display: none; }
-        .notice.info { background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); }
-        .notice.info::before { content: "\2139\FE0F"; }
-        .notice.warning { background: var(--warning-bg); color: var(--warning-text); border-color: var(--warning-border); }
-        .notice.warning::before { content: "\26A0\FE0F"; }
-        .destinations { margin: 0 0 8px; padding: 0; list-style: none; }
-        .destinations li { margin: 6px 0; padding-left: 24px; text-indent: -24px; }
-        .destinations li::before { display: inline-block; width: 24px; text-indent: 0; content: "\2026"; }
-        .destinations li.ok::before { content: "\2705"; }
-        .destinations li.failed::before { content: "\274C"; }
-        button { margin-top: 24px; width: 100%; padding: 12px; font: inherit; font-weight: 600; border: 0;
-            border-radius: 4px; background: var(--accent); color: var(--accent-text); cursor: pointer; }
-        button:disabled { opacity: 0.5; cursor: progress; }
-        button[hidden], label[hidden] { display: none; }
-        button.secondary { margin-top: 8px; padding: 8px; background: var(--panel); color: var(--text);
-            border: 1px solid var(--border); font-weight: 400; }
-        .sessions { margin: 0; padding: 0; list-style: none; max-height: 220px; overflow-y: auto; }
-        .sessions li { display: flex; align-items: center; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--border); }
-        .sessions .session-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-        .sessions small { display: block; color: var(--muted); }
-        button.icon { margin: 0; width: auto; padding: 4px 8px; background: none; border: 1px solid var(--border);
-            font-size: 1rem; line-height: 1; }
-        #pygletStatus { position: fixed; left: 16px; bottom: 12px; margin: 0; color: var(--muted);
-            font-size: 0.85rem; white-space: pre-wrap; pointer-events: none; }
-        /* Korean adaptation: participant page */
-        body.study #lang, body.study label[for="lang"], body.study #mode, body.study label[for="mode"],
-        body.study .hint[data-i18n="choose_next"], body.study label.inline:has(#fullscreen),
-        body.study .notice.info, body.study #back, body.study #end .subtitle,
-        body.study #end [data-i18n="kept_in_browser"] { display: none !important; }
-        #study h2 { font-size: 1.05rem; margin: 20px 0 4px; }
-        .lead { line-height: 1.6; }
-        .study-list { padding-left: 20px; line-height: 1.6; }
-        .study-buttons { display: flex; gap: 8px; align-items: center; }
-        .pre-q { margin: 10px 0; } .pre-q p { margin: 0 0 4px; }
-        .pre-q .scale { display: flex; gap: 6px; flex-wrap: wrap; font-size: 0.9rem; }
-        .pre-q .scale label { display: flex; gap: 4px; align-items: center; font-weight: 400; }
-        .study-buttons button { margin-top: 8px; width: auto; flex: 1; }
-        #result-code { width: 100%; box-sizing: border-box; font: 12px ui-monospace, monospace; word-break: break-all; }
-    </style>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <main id="menu" class="screen">
         <div class="panel">
-            <h1>OpenMATB <span class="version">v1.5.0</span></h1>
-            <p class="subtitle">Julien.Cegarra@univ-jfc.fr</p>
+            <h1>다중과업 수행 연구</h1>
+            <p class="subtitle">OpenMATB(Cegarra &amp; Valéry) 과제</p>
 
-            <section id="study" hidden>
-                <div id="mobile-warning" hidden>
-                    <p class="lead"><strong>이 테스트는 PC에서만 할 수 있습니다.</strong> 휴대폰으로는 참여할 수 없어요. 아래 버튼으로 링크를 저장해 두었다가 PC(노트북 포함)에서 열어 주세요.</p>
-                    <div class="study-buttons">
-                        <button id="m-share" type="button" hidden>카톡 나와의 채팅 등으로 보내기</button>
-                        <button id="m-copy" type="button" class="secondary">링크 복사</button>
-                    </div>
-                    <p id="m-done" class="hint"></p>
-                    <p class="hint">PC 주소창에 직접 입력해도 됩니다: <strong id="m-url"></strong></p>
+            <div id="mobile-warning" hidden>
+                <p class="lead"><strong>이 테스트는 PC에서만 할 수 있습니다.</strong> 휴대폰으로는 참여할 수 없어요. 아래 버튼으로 링크를 저장해 두었다가 PC(노트북 포함)에서 열어 주세요.</p>
+                <div class="study-buttons">
+                    <button id="m-share" type="button" hidden>카톡 나와의 채팅 등으로 보내기</button>
+                    <button id="m-copy" type="button" class="secondary">링크 복사</button>
                 </div>
+                <p id="m-done" class="hint"></p>
+                <p class="hint">PC 주소창에 직접 입력해도 됩니다: <strong id="m-url"></strong></p>
+            </div>
+
+            <section id="study">
                 <p class="lead">다중과업 수행 연구에 참여해 주셔서 감사합니다. 약 <strong>15분</strong> 걸리며 중간에 멈출 수 없으니, 방해받지 않는 시간에 해 주세요. 테스트가 모두 종료될 때까지 <strong>Esc는 절대 누르지 마세요.</strong></p>
                 <ul class="study-list">
                     <li><strong>PC</strong>(노트북 포함), <strong>마우스</strong>, 키보드, <strong>스피커나 이어폰</strong>이 필요합니다.</li>
                     <li><strong>Chrome</strong> 또는 <strong>Edge</strong> 브라우저를 써 주세요. 브라우저 창을 <strong>최대화</strong>한 상태에서 시작해 주세요.</li>
-                    <li>이 페이지는 이름이나 연락처를 묻지 않습니다. 끝에 나오는 <strong>결과 코드</strong>가 설문지에 자동으로 들어가 함께 제출됩니다.</li>
+                    <li>이 페이지는 이름이나 연락처를 묻지 않습니다. 끝에 나오는 <strong>결과 코드</strong>가 설문지에 자동으로 들어가 함께 제출됩니다. 과제 수행 기록(키 입력과 점수, 이름 없음)은 연구자의 자료 저장소로 전송됩니다.</li>
                     <li><strong>만 19세 이상</strong>만 참여할 수 있습니다. 한 사람이 <strong>한 번만</strong> 참여해 주세요.</li>
                     <li>언제든 창을 닫아 참여를 그만둘 수 있습니다.</li>
                 </ul>
@@ -121,70 +43,40 @@
                 </div>
                 <p id="sound-voice" class="hint"></p>
                 <label class="inline"><input id="agree" type="checkbox"> <span>위 내용을 읽었고 참여에 동의합니다.</span></label>
-                <p id="size-warning" class="notice warning" hidden>브라우저 창이 너무 작습니다. 창을 최대화하면 시작 버튼이 나타납니다.</p>
+                <p id="size-warning" class="notice" hidden>브라우저 창이 너무 작습니다. 창을 최대화하면 시작 버튼이 나타납니다.</p>
+                <p id="load-error" class="notice" hidden></p>
+                <button id="start" type="button" hidden>시작</button>
             </section>
-
-            <label for="lang" data-i18n="language">Language</label>
-            <select id="lang">
-                <option value="en_EN">English</option>
-                <option value="fr_FR">Français</option>
-                <option value="ko_KR">한국어</option>
-            </select>
-
-            <label for="mode" data-i18n="mode">Mode</label>
-            <select id="mode">
-                <option value="scenario" data-i18n="run_scenario">Run a scenario</option>
-                <option value="replay" data-i18n="replay_session">Replay a session</option>
-            </select>
-            <p class="hint" data-i18n="choose_next">The scenario (or session) is chosen in the next screen.</p>
-
-            <div id="replay-options" hidden>
-                <label for="session-file" data-i18n="import_session">Import a session file (optional)</label>
-                <input id="session-file" type="file" accept=".csv,.gz">
-                <p class="hint" data-i18n="sessions_kept">Sessions run in this browser are kept and listed automatically.</p>
-                <label data-i18n="stored_sessions">Sessions kept in this browser</label>
-                <p id="sessions-empty" class="hint" data-i18n="no_session">No session yet.</p>
-                <ul id="sessions-list" class="sessions"></ul>
-                <button id="delete-all" type="button" class="secondary" data-i18n="delete_all" hidden>Delete all the sessions</button>
-            </div>
-
-            <label class="inline"><input id="fullscreen" type="checkbox" checked> <span data-i18n="fullscreen">Fullscreen</span></label>
-            <div id="trigger-options" hidden>
-                <label data-i18n="trigger_box">Trigger box (parallelport plugin)</label>
-                <p class="hint"><span id="trigger-port" data-i18n="no_port">No port chosen.</span></p>
-                <button id="trigger-choose" type="button" class="secondary" data-i18n="choose_port">Choose the port</button>
-            </div>
-            <p class="notice info"><span><span id="joystick-status" data-i18n="joystick_hint">Joystick: press one of its buttons to detect it.</span>
-                <strong id="joystick-name"></strong></span></p>
-
-            <p id="browser-warning" class="notice warning" role="alert" hidden></p>
-            <p id="config-error" class="notice warning" role="alert" hidden></p>
-
-            <button id="start" disabled data-i18n="start">Start</button>
-            <p id="wasm-mime" class="hint" data-i18n-title="wasm_mime_detail" hidden>&#x26A0;&#xFE0F; <span data-i18n="wasm_mime"></span></p>
         </div>
     </main>
+
+    <div id="task" hidden>
+        <canvas id="canvas"></canvas>
+        <div id="overlay"></div>
+        <div id="pause-notice" hidden>과제가 잠시 멈췄습니다. 여기를 클릭하면 이어집니다.
+Esc를 누르라는 알림이 떠도 Esc는 누르지 마세요.</div>
+    </div>
 
     <main id="end" class="screen" hidden>
         <div class="panel">
-            <h1 data-i18n="session_ended">Session ended</h1>
-            <p class="subtitle"><span data-i18n="log_file">The log file</span> <strong id="end-file"></strong></p>
-            <ul id="end-destinations" class="destinations" aria-live="polite"></ul>
-            <section id="study-end" hidden>
-                <p id="study-lead" class="lead">수고 많으셨습니다. 아래 <strong>결과 코드 전체</strong>를 복사해 설문지의 "결과 코드" 칸에 붙여 넣어 주세요. 설문에 반드시 참여해주시기 바랍니다.</p>
-                <textarea id="result-code" rows="5" readonly></textarea>
-                <div class="study-buttons"><button id="copy-code" type="button">코드 복사</button><span id="copied" class="hint"></span></div>
-                <p id="survey-line" class="lead"></p>
-                <p class="hint">설문 제출을 마칠 때까지 이 창을 닫지 마세요.</p>
-            </section>
-            <p class="hint" data-i18n="kept_in_browser">It is also kept in this browser for replay.</p>
-            <button id="back" data-i18n="back_to_menu">Back to menu</button>
+            <h1>과제가 끝났습니다</h1>
+            <p id="study-lead" class="lead">수고 많으셨습니다. 아래 <strong>결과 코드 전체</strong>를 복사해 설문지의 "결과 코드" 칸에 붙여 넣어 주세요. 설문에 반드시 참여해주시기 바랍니다.</p>
+            <textarea id="result-code" rows="5" readonly></textarea>
+            <div class="study-buttons"><button id="copy-code" type="button">코드 복사</button><span id="copied" class="hint"></span></div>
+            <p id="survey-line" class="lead"></p>
+            <p class="hint">설문 제출을 마칠 때까지 이 창을 닫지 마세요.</p>
+            <p id="upload-line" class="hint"></p>
         </div>
     </main>
 
-    <canvas id="pygletCanvas" hidden></canvas>
-    <pre id="pygletStatus"></pre>
+    <div id="crash" hidden>
+        <div class="crash-panel">
+            <p id="crash-text"></p>
+            <p>아래 버튼을 누르면 지금까지의 결과 코드가 나옵니다. 설문에 그대로 제출해 주세요.</p>
+            <button id="crash-end" type="button">지금까지의 결과 코드 받기</button>
+        </div>
+    </div>
 
-    <script type="module" src="openmatb.js"></script>
+    <script type="module" src="app.js"></script>
 </body>
 </html>

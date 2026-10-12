@@ -117,7 +117,27 @@ function setupMobile() {
     };
 }
 
+// Noto Sans KR, as in v1: the Latin face limited to its range, and the subsets of Hangul used by the texts
+// (fonts/korean.json). Without them (failed download) the system Korean font is used.
+async function loadFonts() {
+    try {
+        const korean = await (await fetch("fonts/korean.json")).json();
+        const faces = [400, 700].map((weight) => new FontFace("Noto Sans KR", `url(fonts/noto-sans-${weight}.woff2)`,
+            { weight: String(weight), unicodeRange: korean.latin }));
+        for (const face of korean.faces) {
+            faces.push(new FontFace("Noto Sans KR", `url(fonts/${face.file})`,
+                { weight: String(face.weight), unicodeRange: face.range }));
+        }
+        for (const face of await Promise.all(faces.map((f) => f.load()))) {
+            document.fonts.add(face);
+        }
+    } catch (error) {
+        console.warn("No Korean fonts:", error);
+    }
+}
+
 async function loadContent() {
+    const fonts = loadFonts();
     const scenarioText = await (await fetch("content/study.txt")).text();
     const scenario = parseScenario(scenarioText);
     const names = [...new Set(scenario.events.filter((e) => e.command[0] === "filename").map((e) => e.command[1]))];
@@ -129,6 +149,7 @@ async function loadContent() {
         }
         files[name] = await response.text();
     }));
+    await fonts;
     return { scenario, files };
 }
 

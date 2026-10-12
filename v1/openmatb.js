@@ -668,14 +668,14 @@ async function loadFonts() {
     // by web/build.py) cover the Hangul of the Korean texts, under the same family name.
     let korean = null;
     try {
-        korean = await (await fetch("fonts/korean.json")).json();
+        korean = await (await fetch("../fonts/korean.json")).json();
     } catch (error) {
         console.warn("No Korean fonts:", error);
     }
-    const faces = FONT_WEIGHTS.map((weight) => new FontFace(FONT_FAMILY, `url(fonts/noto-sans-${weight}.woff2)`,
+    const faces = FONT_WEIGHTS.map((weight) => new FontFace(FONT_FAMILY, `url(../fonts/noto-sans-${weight}.woff2)`,
         { weight: String(weight), ...(korean ? { unicodeRange: korean.latin } : {}) }));
     for (const face of korean?.faces || []) {
-        faces.push(new FontFace(FONT_FAMILY, `url(fonts/${face.file})`,
+        faces.push(new FontFace(FONT_FAMILY, `url(../fonts/${face.file})`,
             { weight: String(face.weight), unicodeRange: face.range }));
     }
     for (const face of await Promise.all(faces.map((f) => f.load()))) {
