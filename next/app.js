@@ -8,7 +8,7 @@ import { TTS } from "./tts.js";
 const SURVEY_URL = "https://docs.google.com/forms/d/e/1FAIpQLSeHJadxow6QJEfFohzVg2eAZvxSjQc6Xk4_qGrP_Wxw7GW0Qw/viewform?usp=pp_url&entry.1248882849={code}";
 const VISIT_LOG = "https://docs.google.com/forms/d/e/1FAIpQLScuKK6QTl_JDZYfGo29X3i2W8Tl49WMwYxZPXSYX2sqdWyybg/formResponse";
 const DATAPIPE_URL = "https://pipe.jspsych.org/api/data/";
-const DATAPIPE_EXPERIMENT = ""; // DataPipe experiment ID: the raw data of each session is sent there when set
+const DATAPIPE_EXPERIMENT = "0pFjuhJjyaVV"; // DataPipe experiment ID: the raw data of each session is sent there when set
 const MIN_WINDOW = [800, 480]; // CSS pixels: a maximized window of a 1366x768 laptop at 125 % scaling is about 1093x490
 const SAMPLE_PROMPT = "에이, 비, 씨, 하나, 둘, 삼, 에이, 비, 씨, 하나, 둘, 삼, 무전기, 컴, 원, 주파수, 하나, 둘, 여섯, 쩜, 오.";
 
