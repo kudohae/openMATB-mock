@@ -284,7 +284,7 @@ function startSession() {
     if (BOT) {
         window.__engineTime = () => engine.scenarioTime; // For the automated checks
     }
-    engine.isSuspended = () => mouse.suspended;
+    engine.isSuspended = () => mouse.suspended || Boolean(abortReason); // Also behind the error notice
     engine.onEnd = finishSession;
     log.manual(0, "voice", TTS.voiceName());
     log.manual(0, "window", `${innerWidth}x${innerHeight} dpr ${devicePixelRatio}`);
@@ -387,8 +387,20 @@ $("crash-end").addEventListener("click", () => {
         }
     }
 });
-window.addEventListener("error", (e) => engine && crash("멈춤", e.error || e.message));
-window.addEventListener("unhandledrejection", (e) => engine && !ended && crash("멈춤", e.reason));
+// Not the errors of other scripts in the page (browser extensions, cross-origin scripts) or the harmless ResizeObserver
+// notice: the session goes on
+const foreign = (message, file, stack) => /^Script error\.?$|ResizeObserver loop/.test(message || "")
+    || Boolean(file && !file.startsWith(location.origin)) || /-extension:\/\//.test(stack || "");
+window.addEventListener("error", (e) => {
+    if (engine && !foreign(e.message, e.filename, e.error?.stack)) {
+        crash("멈춤", e.error || e.message);
+    }
+});
+window.addEventListener("unhandledrejection", (e) => {
+    if (engine && !ended && !foreign(String(e.reason?.message || e.reason), "", e.reason?.stack)) {
+        crash("멈춤", e.reason);
+    }
+});
 
 // ---- End of the session ----
 async function finishSession(reason) {
